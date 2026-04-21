@@ -54,132 +54,105 @@ const NutritionPlanner = () => {
   };
 
   const callAPI = async (prompt, maxTokens) => {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`API ${response.status}: ${errText}`);
-  }
-
-  const data = await response.json();
-
-  if (data.error) {
-    throw new Error(data.error);
-  }
-
-  const text = data.content?.find(c => c.type === "text")?.text || "";
-  const clean = text
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-
-  const match = clean.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON found in response. Got: " + text.slice(0, 200));
-
-  return JSON.parse(match[0]);
-};
-
-  const generateWeeklyPlan = async () => {
-  setLoading(true);
-  try {
-    // STEP 1: Fetch real recipes from Supabase
-    setLoadingMsg('Fetching recipes from database...');
-
-    const dbResponse = await fetch('/api/recipes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
       body: JSON.stringify({
-        cuisines:     userData.preferences,
-        restrictions: userData.restrictions,
-        budget:       userData.budget,
+        model: "claude-sonnet-4-20250514",
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
       }),
     });
-
-    if (!dbResponse.ok) {
-      throw new Error('Failed to fetch recipes from database');
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`API ${response.status}: ${errText}`);
     }
+    const data = await response.json();
+    const text = data.content.find(c => c.type === "text")?.text || "";
+    const clean = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON found in response. Raw: " + text.slice(0, 300));
+    return JSON.parse(match[0]);
+  };
 
-    const database = await dbResponse.json();
+  const generateWeeklyPlan = async () => {
+    setLoading(true);
+    try {
+      setLoadingMsg('Building your food database...');
+      const dbPrompt = `You are a nutritionist. Create a food database of 30 items for these cuisines: ${userData.preferences.join(', ')}.
+Dietary restrictions: ${userData.restrictions.join(', ')}. Budget: ${userData.budget}.
+Return ONLY raw JSON (no markdown fences, no extra text):
+{"proteins":[{"id":"p1","name":"","calories":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"cost":0,"cuisine":"","portionSize":"100g","ingredients":["","",""],"cookingTime":"15 min","instructions":""}],"carbs":[],"vegetables":[],"fats":[],"snacks":[]}
+Include: proteins=10 items, carbs=6, vegetables=6, fats=4, snacks=4. Use authentic dish names. Instructions max 2 sentences.`;
+      const database = await callAPI(dbPrompt, 6000);
+      setFoodDatabase(database);
 
-    if (database.error) {
-      throw new Error(database.error);
-    }
-
-    // Validate every category exists
-    const requiredKeys = ['proteins', 'carbs', 'vegetables', 'fats', 'snacks'];
-    for (const key of requiredKeys) {
-      if (!database[key] || !Array.isArray(database[key])) {
-        throw new Error(`No ${key} found. Try selecting more cuisines.`);
-      }
-    }
-
-    const allFoods = [
-      ...database.proteins,
-      ...database.carbs,
-      ...database.vegetables,
-      ...database.fats,
-      ...database.snacks,
-    ];
-
-    if (allFoods.length < 5) {
-      throw new Error('Not enough recipes found. Try selecting more cuisines.');
-    }
-
-    setFoodDatabase(database);
-
-    // STEP 2: Ask AI to build a plan using the real recipes
-    setLoadingMsg('Building your 7-day meal plan...');
-
-    const { calories, protein, carbs, fat } = calculateMacros();
-
-    const foodList = allFoods
-      .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g,$${f.cost})`)
-      .join(', ');
-
-    const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
+      setLoadingMsg('Generating your 7-day meal plan...');
+      const { calories, protein, carbs, fat } = calculateMacros();
+      const allFoods = [...database.proteins, ...database.carbs, ...database.vegetables, ...database.fats, ...database.snacks];
+      const foodList = allFoods.map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g,$${f.cost})`).join(', ');
+      const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
 Goal: ${userData.goal}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Available foods (id:name:macros): ${foodList}
 Return ONLY raw JSON (no markdown fences):
-{"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"uuid-here","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 15 words. Use the exact id values provided.`;
-
-    const planData = await callAPI(planPrompt, 8000);
-
-    if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
-      throw new Error('Meal plan generation failed. Please try again.');
+{"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"p1","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
+Rules: 7 days (Monday-Sunday), vary meals each day, 2-3 items per meal, reasoning max 15 words.`;
+      const planData = await callAPI(planPrompt, 8000);
+      setWeeklyPlan(planData);
+      setStep(4);
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setLoading(false);
+      setLoadingMsg('');
     }
-
-    setWeeklyPlan(planData);
-    setStep(4);
-
-  } catch (error) {
-    console.error('Error:', error);
-    alert('Error: ' + error.message);
-  } finally {
-    setLoading(false);
-    setLoadingMsg('');
-  }
-};
+  };
 
   const swapFood = async (dayIndex, mealType, currentItemId) => {
     setSwapping({ dayIndex, mealType, itemId: currentItemId });
     try {
       const allFoods = [...foodDatabase.proteins, ...foodDatabase.carbs, ...foodDatabase.vegetables, ...foodDatabase.fats, ...foodDatabase.snacks];
+
+      // Find the current food and its category
       const currentFood = allFoods.find(f => f.id === currentItemId);
-      const foodList = allFoods.filter(f => f.id !== currentItemId).map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g)`).join(', ');
-      const prompt = `Swap this food: ${currentFood.name} (${currentFood.calories}cal, P${currentFood.protein}g).
-User goal: ${userData.goal}. Restrictions: ${userData.restrictions.join(', ')}.
-Available: ${foodList}
+      const currentCategory = currentFood.category;
+
+      // Get IDs of all other items already in this meal to avoid swapping in a duplicate
+      const currentMealItemIds = weeklyPlan.days[dayIndex].meals[mealType].items
+        .map(item => item.id)
+        .filter(id => id !== currentItemId);
+
+      // Only offer foods from the SAME category, excluding the current item
+      // and anything already used in this meal
+      const sameCategoryFoods = allFoods.filter(f =>
+        f.category === currentCategory &&
+        f.id !== currentItemId &&
+        !currentMealItemIds.includes(f.id)
+      );
+
+      // Fallback: if no same-category alternatives exist, use all foods excluding current meal
+      const candidateFoods = sameCategoryFoods.length > 0
+        ? sameCategoryFoods
+        : allFoods.filter(f => f.id !== currentItemId && !currentMealItemIds.includes(f.id));
+
+      const foodList = candidateFoods
+        .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
+        .join(', ');
+
+      const mealLabels = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Evening Snack', dinner: 'Dinner' };
+
+      const prompt = `You are a nutritionist. Swap a ${currentCategory} item for ${mealLabels[mealType]}.
+Current item: ${currentFood.name} (${currentFood.calories}cal, P${currentFood.protein}g, C${currentFood.carbs}g, F${currentFood.fat}g).
+User goal: ${userData.goal}. Dietary restrictions: ${userData.restrictions.join(', ')}.
+Pick the BEST alternative from this same-category (${currentCategory}) list:
+${foodList}
+Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
 Return ONLY raw JSON: {"replacementId":"id","multiplier":1.0,"reasoning":"brief reason max 15 words"}`;
+
       const swapData = await callAPI(prompt, 500);
       setWeeklyPlan(prev => {
         const updated = JSON.parse(JSON.stringify(prev));
@@ -362,13 +335,7 @@ Return ONLY raw JSON: {"replacementId":"id","multiplier":1.0,"reasoning":"brief 
   const WeeklyPlanView = () => {
     const [selectedDay, setSelectedDay] = useState(0);
     if (!weeklyPlan || !foodDatabase) return null;
-    const allFoods = [
-  ...(foodDatabase.proteins || []),
-  ...(foodDatabase.carbs || []),
-  ...(foodDatabase.vegetables || []),
-  ...(foodDatabase.fats || []),
-  ...(foodDatabase.snacks || []),
-];
+    const allFoods = [...foodDatabase.proteins, ...foodDatabase.carbs, ...foodDatabase.vegetables, ...foodDatabase.fats, ...foodDatabase.snacks];
     const currentDay = weeklyPlan.days[selectedDay];
     const mealNames = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Evening Snack', dinner: 'Dinner' };
     const mealIcons = { breakfast: '🌅', lunch: '☀️', snack: '🍎', dinner: '🌙' };
@@ -439,13 +406,7 @@ Return ONLY raw JSON: {"replacementId":"id","multiplier":1.0,"reasoning":"brief 
                 <div className="meal-items">
                   {mealData.items.map((item, idx) => {
                     const food = allFoods.find(f => f.id === item.id);
-                    if (!food) return (
-                      <div key={idx} className="food-row">
-                        <div className="food-details">
-                          <div className="food-name" style={{color:'#999'}}>Item not found ({item.id})</div>
-                        </div>
-                      </div>
-                    );
+                    if (!food) return null;
                     const m = item.multiplier || 1;
                     const isSwapping = swapping?.dayIndex === selectedDay && swapping?.mealType === mealType && swapping?.itemId === item.id;
                     return (
