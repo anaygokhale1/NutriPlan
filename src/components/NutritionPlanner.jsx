@@ -1,5 +1,4 @@
 "use client";
-"use client";
 import React, { useState } from 'react';
 import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Image as ImageIcon } from 'lucide-react';
 
@@ -8,7 +7,8 @@ const NutritionPlanner = () => {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [userData, setUserData] = useState({
-    goal: '', weight: '', height: '', sex: '',
+    goal: '', weight: '', height: '', age: '', sex: '',
+    weightUnit: 'kg', heightUnit: 'cm',
     activities: [], customActivities: '',
     preferences: [], restrictions: [], budget: '',
   });
@@ -29,29 +29,60 @@ const NutritionPlanner = () => {
     [field]: prev[field].includes(value) ? prev[field].filter(v => v !== value) : [...prev[field], value]
   }));
 
+  // Convert inputs to metric for Mifflin-St Jeor BMR calculation
+  const getMetricValues = () => {
+    const rawWeight = parseFloat(userData.weight) || 0;
+    const rawHeight = parseFloat(userData.height) || 0;
+    const heightFt  = parseFloat(userData.heightFt) || 0;
+    const heightIn  = parseFloat(userData.heightIn) || 0;
+
+    // Weight: lbs → kg
+    const weightKg = userData.weightUnit === 'lbs'
+      ? rawWeight * 0.453592
+      : rawWeight;
+
+    // Height: ft+in → cm
+    const heightCm = userData.heightUnit === 'ft'
+      ? (heightFt * 30.48) + (heightIn * 2.54)
+      : rawHeight;
+
+    return { weightKg, heightCm };
+  };
+
   const calculateMacros = () => {
-    const weight = parseFloat(userData.weight);
-    const height = parseFloat(userData.height);
-    let bmr = userData.sex === 'Male'
-      ? (10 * weight) + (6.25 * height) - (5 * 25) + 5
-      : (10 * weight) + (6.25 * height) - (5 * 25) - 161;
+    const { weightKg, heightCm } = getMetricValues();
+    const age = parseFloat(userData.age) || 25;
+
+    // Mifflin-St Jeor BMR (uses actual age)
+    const bmr = userData.sex === 'Male'
+      ? (10 * weightKg) + (6.25 * heightCm) - (5 * age) + 5
+      : (10 * weightKg) + (6.25 * heightCm) - (5 * age) - 161;
+
     const mult = userData.activities.includes('Gym (3-5x/week)') ? 1.55 :
       userData.activities.includes('Running/Cardio') ? 1.6 :
       userData.activities.includes('Sports (Team/Individual)') ? 1.65 :
       userData.activities.includes('Walking/Light Activity') ? 1.375 : 1.2;
+
     let calories = bmr * mult;
     if (userData.goal === 'Weight Loss') calories -= 500;
     else if (userData.goal === 'Weight Gain' || userData.goal === 'Muscle Gain') calories += 300;
+
+    // Protein/fat targets based on kg bodyweight
     let protein, carbs, fat;
     if (userData.goal === 'Muscle Gain' || userData.goal === 'Athletic Performance') {
-      protein = weight * 2; fat = weight * 1;
+      protein = weightKg * 2; fat = weightKg * 1;
     } else if (userData.goal === 'Weight Loss') {
-      protein = weight * 2.2; fat = weight * 0.8;
+      protein = weightKg * 2.2; fat = weightKg * 0.8;
     } else {
-      protein = weight * 1.6; fat = weight * 1;
+      protein = weightKg * 1.6; fat = weightKg * 1;
     }
     carbs = (calories - (protein * 4) - (fat * 9)) / 4;
-    return { calories: Math.round(calories), protein: Math.round(protein), carbs: Math.round(carbs), fat: Math.round(fat) };
+    return {
+      calories: Math.round(calories),
+      protein:  Math.round(protein),
+      carbs:    Math.round(Math.max(0, carbs)),
+      fat:      Math.round(fat),
+    };
   };
 
   // ── Calls /api/chat (Next.js route that holds the Anthropic API key) ──
@@ -286,15 +317,81 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           ))}
         </div>
       </div>
+      {/* Unit toggle */}
+      <div className="unit-toggle-row">
+        <div className="unit-toggle-group">
+          <span className="unit-toggle-label">Weight</span>
+          <div className="unit-toggle">
+            <button className={`unit-btn ${userData.weightUnit === 'kg' ? 'active' : ''}`} onClick={() => updateUserData('weightUnit', 'kg')}>kg</button>
+            <button className={`unit-btn ${userData.weightUnit === 'lbs' ? 'active' : ''}`} onClick={() => updateUserData('weightUnit', 'lbs')}>lbs</button>
+          </div>
+        </div>
+        <div className="unit-toggle-group">
+          <span className="unit-toggle-label">Height</span>
+          <div className="unit-toggle">
+            <button className={`unit-btn ${userData.heightUnit === 'cm' ? 'active' : ''}`} onClick={() => updateUserData('heightUnit', 'cm')}>cm</button>
+            <button className={`unit-btn ${userData.heightUnit === 'ft' ? 'active' : ''}`} onClick={() => updateUserData('heightUnit', 'ft')}>ft/in</button>
+          </div>
+        </div>
+      </div>
+
       <div className="input-row">
+        {/* Weight input */}
         <div className="input-group">
-          <label>Weight (kg)</label>
-          <input type="number" value={userData.weight} onChange={(e) => updateUserData('weight', e.target.value)} placeholder="70" />
+          <label>Weight ({userData.weightUnit})</label>
+          <input
+            type="number" min="1"
+            value={userData.weight}
+            onChange={(e) => updateUserData('weight', e.target.value)}
+            placeholder={userData.weightUnit === 'kg' ? '70' : '155'}
+          />
         </div>
+
+        {/* Height input — single field for cm, two fields for ft+in */}
+        {userData.heightUnit === 'cm' ? (
+          <div className="input-group">
+            <label>Height (cm)</label>
+            <input
+              type="number" min="1"
+              value={userData.height}
+              onChange={(e) => updateUserData('height', e.target.value)}
+              placeholder="175"
+            />
+          </div>
+        ) : (
+          <div className="input-group">
+            <label>Height (ft / in)</label>
+            <div className="height-ft-row">
+              <input
+                type="number" min="0" max="8"
+                value={userData.heightFt || ''}
+                onChange={(e) => updateUserData('heightFt', e.target.value)}
+                placeholder="5"
+              />
+              <span className="height-sep">ft</span>
+              <input
+                type="number" min="0" max="11"
+                value={userData.heightIn || ''}
+                onChange={(e) => updateUserData('heightIn', e.target.value)}
+                placeholder="9"
+              />
+              <span className="height-sep">in</span>
+            </div>
+          </div>
+        )}
+
+        {/* Age */}
         <div className="input-group">
-          <label>Height (cm)</label>
-          <input type="number" value={userData.height} onChange={(e) => updateUserData('height', e.target.value)} placeholder="175" />
+          <label>Age (years)</label>
+          <input
+            type="number" min="10" max="100"
+            value={userData.age}
+            onChange={(e) => updateUserData('age', e.target.value)}
+            placeholder="25"
+          />
         </div>
+
+        {/* Sex */}
         <div className="input-group">
           <label>Sex</label>
           <select value={userData.sex} onChange={(e) => updateUserData('sex', e.target.value)}>
@@ -317,7 +414,11 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         <input type="text" value={userData.customActivities} onChange={(e) => updateUserData('customActivities', e.target.value)} placeholder="E.g., Swimming 3x/week, Yoga daily" />
       </div>
       <div className="btn-right">
-        <button className="next-btn" onClick={() => setStep(2)} disabled={!userData.goal || !userData.weight || !userData.height || !userData.sex || userData.activities.length === 0}>
+        <button className="next-btn" onClick={() => setStep(2)} disabled={
+          !userData.goal || !userData.weight || !userData.age || !userData.sex || userData.activities.length === 0 ||
+          (userData.heightUnit === 'cm' ? !userData.height : (!userData.heightFt && !userData.heightIn)) ||
+          userData.activities.length === 0
+        }>
           Continue to Preferences →
         </button>
       </div>
@@ -376,11 +477,19 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             </div>
             <div className="review-block">
               <div className="review-block-title">Weight</div>
-              <div className="review-block-value">{userData.weight} kg</div>
+              <div className="review-block-value">{userData.weight} {userData.weightUnit}</div>
             </div>
             <div className="review-block">
               <div className="review-block-title">Height</div>
-              <div className="review-block-value">{userData.height} cm</div>
+              <div className="review-block-value">
+                {userData.heightUnit === 'cm'
+                  ? `${userData.height} cm`
+                  : `${userData.heightFt || 0}ft ${userData.heightIn || 0}in`}
+              </div>
+            </div>
+            <div className="review-block">
+              <div className="review-block-title">Age</div>
+              <div className="review-block-value">{userData.age} yrs</div>
             </div>
             <div className="review-block">
               <div className="review-block-title">Sex</div>
@@ -646,7 +755,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .btn-right { display: flex; justify-content: flex-end; margin-top: 1.5rem; }
         .button-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1.5rem; }
         .review-card { background: #faf8f5; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.5rem; }
-        .review-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1rem; }
+        .review-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-bottom: 1rem; }
         .review-block { background: white; border-radius: 8px; padding: 0.75rem; border: 1px solid #e8e5df; text-align: center; }
         .review-block-title { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
         .review-block-value { font-weight: 700; font-size: 1rem; color: #1e1e1e; }
@@ -718,6 +827,17 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .ing-list li::before { content: "•"; position: absolute; left: 0; color: #3d6b4a; font-weight: 700; }
         .ing-list li:last-child { border-bottom: none; }
         .instructions-text { font-size: 0.9rem; line-height: 1.75; background: #faf8f5; padding: 1rem; border-radius: 8px; color: #333; }
+        /* ── Unit Toggle ── */
+        .unit-toggle-row { display: flex; gap: 1.5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+        .unit-toggle-group { display: flex; align-items: center; gap: 0.5rem; }
+        .unit-toggle-label { font-size: 0.8rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.4px; }
+        .unit-toggle { display: flex; border: 1.5px solid #e0ddd7; border-radius: 6px; overflow: hidden; }
+        .unit-btn { padding: 0.35rem 0.75rem; border: none; background: white; font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 600; color: #888; cursor: pointer; transition: all 0.15s; }
+        .unit-btn:hover { background: #f5faf6; color: #3d6b4a; }
+        .unit-btn.active { background: #3d6b4a; color: white; }
+        .height-ft-row { display: flex; align-items: center; gap: 0.4rem; }
+        .height-ft-row input { flex: 1; min-width: 0; }
+        .height-sep { font-size: 0.85rem; color: #888; font-weight: 600; white-space: nowrap; }
         .spin { animation: rotate 1s linear infinite; }
         @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @media (max-width: 640px) {
