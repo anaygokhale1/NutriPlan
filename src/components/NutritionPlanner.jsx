@@ -859,7 +859,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           {weeklyPlan.days.map((day, i) => (
             <button key={i} className={`day-tab ${selectedDay === i ? 'active' : ''}`} onClick={() => setSelectedDay(i)}>
               <span className="day-tab-name">{day.dayName.slice(0, 3)}</span>
-              <span className="day-tab-cal">{Math.round(day.dailyTotals.calories)}</span>
+              <span className="day-tab-cal">{Math.round(day.dailyTotals.calories)} cal</span>
             </button>
           ))}
         </div>
