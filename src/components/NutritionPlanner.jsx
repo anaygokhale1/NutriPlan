@@ -1,11 +1,13 @@
 "use client";
 import React, { useState } from 'react';
-import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Image as ImageIcon } from 'lucide-react';
+import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Image as ImageIcon, Download, ShoppingCart } from 'lucide-react';
 
 const NutritionPlanner = () => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [progressInterval, setProgressInterval] = useState(null);
   const [userData, setUserData] = useState({
     goal: '', weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
@@ -129,12 +131,37 @@ const NutritionPlanner = () => {
     return data;
   };
 
+  // Simulates smooth 0→95% progress, then snaps to 100% when done
+  const startProgress = (startPct, endPct, durationMs) => {
+    setLoadingProgress(startPct);
+    const steps = 60;
+    const increment = (endPct - startPct) / steps;
+    const intervalMs = durationMs / steps;
+    let current = startPct;
+    const id = setInterval(() => {
+      current = Math.min(current + increment, endPct);
+      setLoadingProgress(Math.round(current));
+      if (current >= endPct) clearInterval(id);
+    }, intervalMs);
+    setProgressInterval(id);
+    return id;
+  };
+
+  const stopProgress = (id) => {
+    if (id) clearInterval(id);
+    setProgressInterval(null);
+    setLoadingProgress(100);
+  };
+
   const generateWeeklyPlan = async () => {
     setLoading(true);
     try {
       // ── STEP 1: Fetch real recipes from Supabase ──
       setLoadingMsg('Fetching recipes from database...');
+      setLoadingProgress(0);
+      const p1 = startProgress(0, 20, 2000);
       const database = await fetchRecipesFromDB();
+      stopProgress(p1);
 
       // Validate every category exists and has items
       const requiredKeys = ['proteins', 'carbs', 'vegetables', 'fats', 'snacks'];
@@ -160,6 +187,7 @@ const NutritionPlanner = () => {
 
       // ── STEP 2: Ask AI to build a 7-day plan using real recipes ──
       setLoadingMsg('Building your 7-day meal plan...');
+      const p2 = startProgress(25, 92, 22000);
       const { calories, protein, carbs, fat } = calculateMacros();
 
       // Pass food as compact id:name(macros) string to keep prompt small
@@ -175,6 +203,8 @@ Return ONLY raw JSON (no markdown fences):
 Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 15 words. Use ONLY the exact id values from the list above.`;
 
       const planData = await callAPI(planPrompt, 8000);
+      stopProgress(p2);
+      setLoadingProgress(100);
 
       if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
         throw new Error('Meal plan generation failed. Please try again.');
@@ -187,8 +217,10 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
       console.error('Error:', error);
       alert('Error: ' + error.message);
     } finally {
+      if (progressInterval) clearInterval(progressInterval);
       setLoading(false);
       setLoadingMsg('');
+      setLoadingProgress(0);
     }
   };
 
@@ -520,11 +552,27 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             ))}
           </div>
         </div>
+        {loading && (
+          <div className="progress-wrap">
+            <div className="progress-header">
+              <span className="progress-msg">{loadingMsg}</span>
+              <span className="progress-pct">{loadingProgress}%</span>
+            </div>
+            <div className="progress-track">
+              <div className="progress-fill" style={{width: loadingProgress + '%'}} />
+            </div>
+            <div className="progress-steps">
+              <span className={loadingProgress >= 20 ? 'ps-done' : 'ps-pending'}>✓ Recipes loaded</span>
+              <span className={loadingProgress >= 92 ? 'ps-done' : loadingProgress >= 25 ? 'ps-active' : 'ps-pending'}>⏳ AI building plan</span>
+              <span className={loadingProgress >= 100 ? 'ps-done' : 'ps-pending'}>✓ Ready!</span>
+            </div>
+          </div>
+        )}
         <div className="button-row">
-          <button className="back-btn" onClick={() => setStep(2)}>← Back</button>
+          <button className="back-btn" onClick={() => setStep(2)} disabled={loading}>← Back</button>
           <button className="generate-btn" onClick={generateWeeklyPlan} disabled={loading}>
             <Calendar size={16} />
-            {loading ? (loadingMsg || 'Generating...') : 'Generate Weekly Meal Plan'}
+            {loading ? 'Generating...' : 'Generate Weekly Meal Plan'}
           </button>
         </div>
       </div>
@@ -533,6 +581,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
 
   const WeeklyPlanView = () => {
     const [selectedDay, setSelectedDay] = useState(0);
+    const [activeTab, setActiveTab] = useState('plan'); // 'plan' | 'shopping'
     if (!weeklyPlan || !foodDatabase) return null;
     const allFoods = [
       ...(foodDatabase.proteins || []),
@@ -544,6 +593,234 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
     const currentDay = weeklyPlan.days[selectedDay];
     const mealNames = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Evening Snack', dinner: 'Dinner' };
     const mealIcons = { breakfast: '🌅', lunch: '☀️', snack: '🍎', dinner: '🌙' };
+
+    // ── Build shopping list from all 7 days ──
+    const buildShoppingList = () => {
+      const ingredientMap = {};
+      weeklyPlan.days.forEach(day => {
+        Object.values(day.meals).forEach(meal => {
+          meal.items.forEach(item => {
+            const food = allFoods.find(f => f.id === item.id);
+            if (!food || !food.ingredients) return;
+            food.ingredients.forEach(ing => {
+              const key = ing.toLowerCase().trim();
+              if (!ingredientMap[key]) {
+                ingredientMap[key] = { name: ing, recipes: new Set(), category: food.category };
+              }
+              ingredientMap[key].recipes.add(food.name);
+            });
+          });
+        });
+      });
+      // Sort by category then alphabetically
+      const categoryOrder = { proteins: 0, carbs: 1, vegetables: 2, fats: 3, snacks: 4 };
+      return Object.values(ingredientMap).sort((a, b) => {
+        const catDiff = (categoryOrder[a.category] || 5) - (categoryOrder[b.category] || 5);
+        return catDiff !== 0 ? catDiff : a.name.localeCompare(b.name);
+      });
+    };
+
+    const categoryLabels = { proteins: '🥩 Proteins & Legumes', carbs: '🌾 Grains & Carbs', vegetables: '🥦 Vegetables & Herbs', fats: '🥑 Fats & Oils', snacks: '🍎 Snacks & Others' };
+
+    // ── Export helpers using SheetJS (loaded dynamically) ──
+    const loadXLSX = () => new Promise((resolve, reject) => {
+      if (window.XLSX) return resolve(window.XLSX);
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = () => resolve(window.XLSX);
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+
+    const exportMealPlan = async () => {
+      const XLSX = await loadXLSX();
+      const wb = XLSX.utils.book_new();
+
+      // ── Sheet 1: Weekly Overview ──
+      const overviewRows = [
+        ['NutriPlan — 7-Day Meal Plan'],
+        ['Goal', userData.goal, 'Budget', userData.budget],
+        ['Daily Calorie Target', calculateMacros().calories + ' kcal',
+         'Daily Protein Target', calculateMacros().protein + 'g'],
+        [],
+        ['Day', 'Total Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Est. Cost ($)'],
+      ];
+      weeklyPlan.days.forEach(day => {
+        overviewRows.push([
+          day.dayName,
+          Math.round(day.dailyTotals.calories),
+          Math.round(day.dailyTotals.protein),
+          Math.round(day.dailyTotals.carbs),
+          Math.round(day.dailyTotals.fat),
+          parseFloat((day.dailyTotals.cost || 0).toFixed(2)),
+        ]);
+      });
+      overviewRows.push([]);
+      overviewRows.push([
+        'WEEKLY AVERAGE',
+        Math.round(weeklyPlan.weeklyTotals.calories / 7),
+        Math.round(weeklyPlan.weeklyTotals.protein / 7),
+        Math.round(weeklyPlan.weeklyTotals.carbs / 7),
+        Math.round(weeklyPlan.weeklyTotals.fat / 7),
+        parseFloat(((weeklyPlan.weeklyTotals.cost || 0) / 7).toFixed(2)),
+      ]);
+      const wsOverview = XLSX.utils.aoa_to_sheet(overviewRows);
+      wsOverview['!cols'] = [22,16,14,12,10,12].map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, wsOverview, 'Weekly Overview');
+
+      // ── Sheet 2+: One sheet per day ──
+      const mealOrder = ['breakfast', 'lunch', 'snack', 'dinner'];
+      const mealLabels = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Evening Snack', dinner: 'Dinner' };
+      weeklyPlan.days.forEach(day => {
+        const rows = [
+          [day.dayName + ' Meal Plan'],
+          ['Meal', 'Food Item', 'Portion', 'Cuisine', 'Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Cost ($)', 'Why This Food'],
+        ];
+        mealOrder.forEach(mealType => {
+          const meal = day.meals[mealType];
+          if (!meal) return;
+          meal.items.forEach((item, i) => {
+            const food = allFoods.find(f => f.id === item.id);
+            if (!food) return;
+            const m = item.multiplier || 1;
+            rows.push([
+              i === 0 ? mealLabels[mealType] : '',
+              food.name,
+              food.portion_size || '',
+              food.cuisine || '',
+              Math.round(food.calories * m),
+              Math.round(food.protein * m),
+              Math.round(food.carbs * m),
+              Math.round(food.fat * m),
+              parseFloat((food.cost * m).toFixed(2)),
+              item.reasoning || '',
+            ]);
+          });
+          // Meal subtotal row
+          rows.push([
+            '',
+            'Subtotal — ' + mealLabels[mealType],
+            '', '',
+            Math.round(meal.totals.calories),
+            Math.round(meal.totals.protein),
+            Math.round(meal.totals.carbs),
+            Math.round(meal.totals.fat),
+            parseFloat((meal.totals.cost || 0).toFixed(2)),
+            '',
+          ]);
+          rows.push([]);
+        });
+        // Daily total
+        rows.push([
+          'DAILY TOTAL', '', '', '',
+          Math.round(day.dailyTotals.calories),
+          Math.round(day.dailyTotals.protein),
+          Math.round(day.dailyTotals.carbs),
+          Math.round(day.dailyTotals.fat),
+          parseFloat((day.dailyTotals.cost || 0).toFixed(2)),
+          '',
+        ]);
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = [14,22,10,12,10,12,10,8,10,30].map(w => ({ wch: w }));
+        XLSX.utils.book_append_sheet(wb, ws, day.dayName.slice(0, 3));
+      });
+
+      XLSX.writeFile(wb, 'NutriPlan_MealPlan.xlsx');
+    };
+
+    const exportShoppingList = async () => {
+      const XLSX = await loadXLSX();
+      const list = buildShoppingList();
+      const wb = XLSX.utils.book_new();
+
+      const rows = [
+        ['NutriPlan — Weekly Shopping List'],
+        ['Generated for your 7-day meal plan', '', '', userData.goal + ' goal'],
+        [],
+        ['✓', 'Ingredient', 'Category', 'Used In Recipes'],
+      ];
+
+      let lastCat = null;
+      list.forEach(item => {
+        const cat = categoryLabels[item.category] || item.category;
+        if (cat !== lastCat) {
+          rows.push([]);
+          rows.push(['', cat.toUpperCase(), '', '']);
+          lastCat = cat;
+        }
+        rows.push([
+          '☐',
+          item.name,
+          cat,
+          [...item.recipes].join(', '),
+        ]);
+      });
+
+      rows.push([]);
+      rows.push(['', 'Total unique ingredients: ' + list.length]);
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [4, 28, 22, 50].map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws, 'Shopping List');
+      XLSX.writeFile(wb, 'NutriPlan_ShoppingList.xlsx');
+    };
+
+    const ShoppingListView = () => {
+      const list = buildShoppingList();
+      const grouped = {};
+      list.forEach(item => {
+        const cat = item.category || 'snacks';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(item);
+      });
+      const [checked, setChecked] = useState({});
+      const toggle = (key) => setChecked(prev => ({ ...prev, [key]: !prev[key] }));
+      const totalItems = list.length;
+      const checkedCount = Object.values(checked).filter(Boolean).length;
+
+      return (
+        <div className="shopping-view">
+          <div className="shopping-header">
+            <div>
+              <h3>Weekly Shopping List</h3>
+              <p className="shopping-sub">All ingredients needed for your 7-day meal plan</p>
+            </div>
+            <div className="shopping-header-right">
+              <div className="shopping-progress">
+                <span className="shopping-count">{checkedCount}/{totalItems}</span>
+                <span className="shopping-count-label">collected</span>
+              </div>
+              <button className="export-btn" onClick={exportShoppingList}>
+                <Download size={14} /> Export Excel
+              </button>
+            </div>
+          </div>
+          <div className="shopping-progress-bar">
+            <div className="shopping-bar-fill" style={{width: totalItems > 0 ? (checkedCount/totalItems*100) + '%' : '0%'}} />
+          </div>
+          {Object.entries(grouped).map(([cat, items]) => (
+            <div key={cat} className="shopping-group">
+              <div className="shopping-group-title">{categoryLabels[cat] || cat}</div>
+              {items.map((item, i) => {
+                const key = item.name.toLowerCase();
+                const done = !!checked[key];
+                return (
+                  <div key={i} className={`shopping-item ${done ? 'checked' : ''}`} onClick={() => toggle(key)}>
+                    <div className={`shopping-checkbox ${done ? 'checked' : ''}`}>
+                      {done && <span>✓</span>}
+                    </div>
+                    <div className="shopping-item-info">
+                      <span className="shopping-item-name">{item.name}</span>
+                      <span className="shopping-item-recipes">Used in: {[...item.recipes].slice(0, 3).join(', ')}{item.recipes.size > 3 ? ` +${item.recipes.size - 3} more` : ''}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      );
+    };
 
     return (
       <div className="plan-view">
@@ -565,6 +842,18 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             ))}
           </div>
         </div>
+
+        {/* View toggle */}
+        <div className="view-tabs">
+          <button className={`view-tab ${activeTab === 'plan' ? 'active' : ''}`} onClick={() => setActiveTab('plan')}>
+            📅 Meal Plan
+          </button>
+          <button className={`view-tab ${activeTab === 'shopping' ? 'active' : ''}`} onClick={() => setActiveTab('shopping')}>
+            🛒 Shopping List
+          </button>
+        </div>
+
+        {activeTab === 'shopping' ? <ShoppingListView /> : (<>
 
         <div className="day-tabs">
           {weeklyPlan.days.map((day, i) => (
@@ -644,11 +933,21 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           </div>
         </div>
 
+        </>)}
+
         <div className="plan-actions">
           <button className="back-btn" onClick={() => { setStep(1); setWeeklyPlan(null); setFoodDatabase(null); }}>Start Over</button>
-          <button className="generate-btn" onClick={generateWeeklyPlan} disabled={loading}>
-            <RefreshCw size={16} /> {loading ? 'Generating...' : 'Regenerate Plan'}
-          </button>
+          <div className="plan-actions-right">
+            <button className="export-btn" onClick={exportMealPlan}>
+              <Download size={14} /> Export Meal Plan
+            </button>
+            <button className="export-btn export-btn-shopping" onClick={exportShoppingList}>
+              <ShoppingCart size={14} /> Export Shopping List
+            </button>
+            <button className="generate-btn" onClick={generateWeeklyPlan} disabled={loading}>
+              <RefreshCw size={16} /> {loading ? 'Generating...' : 'Regenerate'}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -838,6 +1137,54 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .height-ft-row { display: flex; align-items: center; gap: 0.4rem; }
         .height-ft-row input { flex: 1; min-width: 0; }
         .height-sep { font-size: 0.85rem; color: #888; font-weight: 600; white-space: nowrap; }
+        /* ── Progress Bar ── */
+        .progress-wrap { background: #f5f3ef; border: 1.5px solid #e0ddd7; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; }
+        .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
+        .progress-msg { font-size: 0.9rem; font-weight: 600; color: #3d6b4a; }
+        .progress-pct { font-size: 1rem; font-weight: 700; color: #3d6b4a; }
+        .progress-track { background: #e0ddd7; border-radius: 99px; height: 10px; overflow: hidden; margin-bottom: 0.75rem; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #3d6b4a, #5a8f6e); border-radius: 99px; transition: width 0.4s ease; }
+        .progress-steps { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .ps-done { font-size: 0.78rem; color: #3d6b4a; font-weight: 600; }
+        .ps-active { font-size: 0.78rem; color: #f59e0b; font-weight: 600; }
+        .ps-pending { font-size: 0.78rem; color: #bbb; }
+
+        /* ── View Tabs ── */
+        .view-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; border-bottom: 2px solid #e8e5df; padding-bottom: 0; }
+        .view-tab { padding: 0.6rem 1.25rem; border: none; background: none; font-family: 'DM Sans', sans-serif; font-size: 0.9rem; font-weight: 600; color: #888; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.2s; border-radius: 6px 6px 0 0; }
+        .view-tab:hover { color: #3d6b4a; background: #f5faf6; }
+        .view-tab.active { color: #3d6b4a; border-bottom-color: #3d6b4a; background: none; }
+
+        /* ── Shopping List ── */
+        .shopping-view { padding-top: 0.5rem; }
+        .shopping-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem; }
+        .shopping-header h3 { font-family: 'Crimson Text', serif; font-size: 1.4rem; color: #1e1e1e; margin-bottom: 0.15rem; }
+        .shopping-sub { font-size: 0.82rem; color: #888; }
+        .shopping-progress { text-align: right; }
+        .shopping-count { font-size: 1.4rem; font-weight: 700; color: #3d6b4a; display: block; }
+        .shopping-count-label { font-size: 0.72rem; color: #888; text-transform: uppercase; letter-spacing: 0.3px; }
+        .shopping-progress-bar { background: #e8e5df; border-radius: 99px; height: 6px; overflow: hidden; margin-bottom: 1.5rem; }
+        .shopping-bar-fill { height: 100%; background: linear-gradient(90deg, #3d6b4a, #5a8f6e); border-radius: 99px; transition: width 0.4s ease; }
+        .shopping-group { margin-bottom: 1.25rem; }
+        .shopping-group-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #3d6b4a; margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid #e8e5df; }
+        .shopping-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 8px; cursor: pointer; transition: background 0.15s; margin-bottom: 0.3rem; border: 1px solid transparent; }
+        .shopping-item:hover { background: #f5faf6; border-color: #d4ead9; }
+        .shopping-item.checked { background: #f5faf6; opacity: 0.6; }
+        .shopping-checkbox { width: 20px; height: 20px; min-width: 20px; border-radius: 5px; border: 2px solid #ccc; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; color: white; transition: all 0.15s; flex-shrink: 0; margin-top: 1px; }
+        .shopping-checkbox.checked { background: #3d6b4a; border-color: #3d6b4a; }
+        .shopping-item-info { flex: 1; min-width: 0; }
+        .shopping-item-name { display: block; font-weight: 600; font-size: 0.9rem; color: #1e1e1e; margin-bottom: 0.15rem; }
+        .shopping-item.checked .shopping-item-name { text-decoration: line-through; color: #999; }
+        .shopping-item-recipes { display: block; font-size: 0.75rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* ── Export Buttons ── */
+        .export-btn { display: inline-flex; align-items: center; gap: 5px; padding: 0.55rem 1rem; border-radius: 7px; border: 1.5px solid #3d6b4a; background: white; color: #3d6b4a; font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+        .export-btn:hover { background: #3d6b4a; color: white; }
+        .export-btn-shopping { border-color: #2563eb; color: #2563eb; }
+        .export-btn-shopping:hover { background: #2563eb; color: white; }
+        .plan-actions { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+        .plan-actions-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+        .shopping-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
         .spin { animation: rotate 1s linear infinite; }
         @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @media (max-width: 640px) {
