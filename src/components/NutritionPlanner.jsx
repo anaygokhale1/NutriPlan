@@ -921,7 +921,8 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                               </button>
                             </div>
                           </div>
-                          <div className="food-meta">{food.portion_size} · {food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · ${(food.cost * m).toFixed(2)}</div>
+                          <div className="food-portion">🍽 {food.portion_size}</div>
+                          <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · ${(food.cost * m).toFixed(2)}</div>
                           <div className="food-reason"><Info size={12} /><span>{item.reasoning}</span></div>
                         </div>
                       </div>
@@ -1102,6 +1103,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .btn-recipe, .btn-swap { display: inline-flex; align-items: center; gap: 3px; padding: 0.25rem 0.5rem; border-radius: 5px; font-size: 0.75rem; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.15s; border: 1.5px solid #3d6b4a; background: white; color: #3d6b4a; white-space: nowrap; }
         .btn-recipe:hover, .btn-swap:hover { background: #3d6b4a; color: white; }
         .btn-swap:disabled { opacity: 0.45; cursor: not-allowed; }
+        .food-portion { font-size: 0.78rem; font-weight: 700; color: #3d6b4a; margin-bottom: 0.2rem; }
         .food-meta { font-size: 0.75rem; color: #999; margin-bottom: 0.3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .food-reason { display: flex; align-items: flex-start; gap: 4px; font-size: 0.78rem; color: #3d6b4a; background: #edf5ef; padding: 0.35rem 0.5rem; border-radius: 5px; line-height: 1.4; }
         .food-reason svg { flex-shrink: 0; margin-top: 1px; }
