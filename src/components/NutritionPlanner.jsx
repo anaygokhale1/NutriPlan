@@ -221,8 +221,27 @@ const NutritionPlanner = () => {
       const p2 = startProgress(25, 92, 22000);
       const { calories, protein, carbs, fat } = calculateMacros();
 
-      // Pass food as compact id:name(macros) string to keep prompt small
-      const foodList = allFoods
+      // Shuffle each category independently so every generation sees a fresh
+      // random subset — this means plans vary across sessions even with the
+      // same database. Math.random() - 0.5 produces a random sort order.
+      const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
+
+      // Cap each category at a sensible ceiling.
+      // The AI only fills ~56 food slots across 7 days so sending 800 recipes
+      // wastes tokens — it has to read every entry before writing a single word.
+      // 80 total recipes ≈ 2,200 tokens vs 800 recipes ≈ 11,000 tokens (5× faster).
+      const sampledFoods = [
+        ...shuffle(database.proteins).slice(0, 25),   // picks 25 random proteins
+        ...shuffle(database.carbs).slice(0, 15),       // picks 15 random carbs
+        ...shuffle(database.vegetables).slice(0, 15),  // picks 15 random vegetables
+        ...shuffle(database.fats).slice(0, 10),        // picks 10 random fats
+        ...shuffle(database.snacks).slice(0, 15),      // picks 15 random snacks
+      ];                                               // = 80 recipes total
+
+      // Build the compact string the AI reads — id + name + key macros only.
+      // We deliberately omit cooking_time, instructions, ingredients etc.
+      // because the AI doesn't need them to pick meals — less text = faster response.
+      const foodList = sampledFoods
         .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g,$${f.cost})`)
         .join(', ');
 
