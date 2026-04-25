@@ -9,7 +9,7 @@ const NutritionPlanner = () => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [progressInterval, setProgressInterval] = useState(null);
   const [userData, setUserData] = useState({
-    goal: '', weight: '', height: '', age: '', sex: '',
+    goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
     activities: [], customActivities: '',
     preferences: [], restrictions: [], budget: '',
@@ -60,20 +60,27 @@ const NutritionPlanner = () => {
       ? (10 * weightKg) + (6.25 * heightCm) - (5 * age) + 5
       : (10 * weightKg) + (6.25 * heightCm) - (5 * age) - 161;
 
-    const mult = userData.activities.includes('Gym (3-5x/week)') ? 1.55 :
-      userData.activities.includes('Running/Cardio') ? 1.6 :
-      userData.activities.includes('Sports (Team/Individual)') ? 1.65 :
-      userData.activities.includes('Walking/Light Activity') ? 1.375 : 1.2;
+    // Activity multiplier — includes custom activities via keyword detection
+    const allActivities = [
+      ...userData.activities,
+      ...(userData.customActivities ? [userData.customActivities] : [])
+    ].join(' ').toLowerCase();
+    const mult = allActivities.includes('sport') || allActivities.includes('team') ? 1.65 :
+      allActivities.includes('run') || allActivities.includes('cardio') ? 1.6 :
+      allActivities.includes('gym') || allActivities.includes('weight') || allActivities.includes('lift') ? 1.55 :
+      allActivities.includes('swim') || allActivities.includes('yoga') || allActivities.includes('bike') || allActivities.includes('cycl') ? 1.5 :
+      allActivities.includes('walk') || allActivities.includes('light') ? 1.375 : 1.2;
 
+    const hasGoal = (g) => userData.goals.includes(g);
     let calories = bmr * mult;
-    if (userData.goal === 'Weight Loss') calories -= 500;
-    else if (userData.goal === 'Weight Gain' || userData.goal === 'Muscle Gain') calories += 300;
+    if (hasGoal('Weight Loss')) calories -= 500;
+    if (hasGoal('Muscle Gain') || hasGoal('Weight Gain')) calories += 300;
 
-    // Protein/fat targets based on kg bodyweight
+    // Protein/fat targets — prioritise muscle gain if both selected
     let protein, carbs, fat;
-    if (userData.goal === 'Muscle Gain' || userData.goal === 'Athletic Performance') {
+    if (hasGoal('Muscle Gain') || hasGoal('Athletic Performance')) {
       protein = weightKg * 2; fat = weightKg * 1;
-    } else if (userData.goal === 'Weight Loss') {
+    } else if (hasGoal('Weight Loss')) {
       protein = weightKg * 2.2; fat = weightKg * 0.8;
     } else {
       protein = weightKg * 1.6; fat = weightKg * 1;
@@ -196,7 +203,7 @@ const NutritionPlanner = () => {
         .join(', ');
 
       const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
-Goal: ${userData.goal}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
+Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Available foods (id:name:macros): ${foodList}
 Return ONLY raw JSON (no markdown fences):
 {"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
@@ -269,7 +276,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
 
       const prompt = `You are a nutritionist. Swap a ${currentCategory} item for ${mealLabels[mealType]}.
 Current item: ${currentFood.name} (${currentFood.calories}cal, P${currentFood.protein}g, C${currentFood.carbs}g, F${currentFood.fat}g).
-User goal: ${userData.goal}. Restrictions: ${userData.restrictions.join(', ')}.
+User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.join(', ')}.
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
@@ -342,10 +349,10 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
       <h2>Tell Us About Your Goals</h2>
       <p className="subtitle">Let's personalize your nutrition journey</p>
       <div className="input-group">
-        <label><Target size={16} /> Primary Goal</label>
+        <label><Target size={16} /> Primary Goals <span style={{fontSize:'0.75rem',color:'#888',fontWeight:400}}>(select all that apply)</span></label>
         <div className="button-grid">
           {goals.map(goal => (
-            <button key={goal} className={`option-btn ${userData.goal === goal ? 'active' : ''}`} onClick={() => updateUserData('goal', goal)}>{goal}</button>
+            <button key={goal} className={`option-btn ${userData.goals.includes(goal) ? 'active' : ''}`} onClick={() => toggleArrayField('goals', goal)}>{goal}</button>
           ))}
         </div>
       </div>
@@ -447,9 +454,9 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
       </div>
       <div className="btn-right">
         <button className="next-btn" onClick={() => setStep(2)} disabled={
-          !userData.goal || !userData.weight || !userData.age || !userData.sex || userData.activities.length === 0 ||
+          userData.goals.length === 0 || !userData.weight || !userData.age || !userData.sex || userData.activities.length === 0 ||
           (userData.heightUnit === 'cm' ? !userData.height : (!userData.heightFt && !userData.heightIn)) ||
-          userData.activities.length === 0
+          userData.goals.length === 0
         }>
           Continue to Preferences →
         </button>
@@ -505,7 +512,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           <div className="review-row">
             <div className="review-block">
               <div className="review-block-title">Goal</div>
-              <div className="review-block-value">{userData.goal}</div>
+              <div className="review-block-value">{userData.goals.join(', ')}</div>
             </div>
             <div className="review-block">
               <div className="review-block-title">Weight</div>
@@ -639,7 +646,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
       // ── Sheet 1: Weekly Overview ──
       const overviewRows = [
         ['NutriPlan — 7-Day Meal Plan'],
-        ['Goal', userData.goal, 'Budget', userData.budget],
+        ['Goals', userData.goals.join(', '), 'Budget', userData.budget],
         ['Daily Calorie Target', calculateMacros().calories + ' kcal',
          'Daily Protein Target', calculateMacros().protein + 'g'],
         [],
@@ -735,7 +742,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
 
       const rows = [
         ['NutriPlan — Weekly Shopping List'],
-        ['Generated for your 7-day meal plan', '', '', userData.goal + ' goal'],
+        ['Generated for your 7-day meal plan', '', '', userData.goals.join(' + ') + ' goal'],
         [],
         ['✓', 'Ingredient', 'Category', 'Used In Recipes'],
       ];
@@ -991,7 +998,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
     <div className="app">
       <header className="app-header">
         <div className="logo"><Utensils size={24} /><span>NutriPlan</span></div>
-        <p className="tagline">Science-Backed Nutrition, Personalized for You</p>
+        <p className="tagline">Your Personalized Nutrition Guide</p>
       </header>
 
       <main className="app-body">
