@@ -7,7 +7,6 @@ const NutritionPlanner = () => {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
-  const [progressInterval, setProgressInterval] = useState(null);
   const [userData, setUserData] = useState({
     goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
@@ -160,37 +159,15 @@ const NutritionPlanner = () => {
     return data;
   };
 
-  // Simulates smooth 0→95% progress, then snaps to 100% when done
-  const startProgress = (startPct, endPct, durationMs) => {
-    setLoadingProgress(startPct);
-    const steps = 60;
-    const increment = (endPct - startPct) / steps;
-    const intervalMs = durationMs / steps;
-    let current = startPct;
-    const id = setInterval(() => {
-      current = Math.min(current + increment, endPct);
-      setLoadingProgress(Math.round(current));
-      if (current >= endPct) clearInterval(id);
-    }, intervalMs);
-    setProgressInterval(id);
-    return id;
-  };
-
-  const stopProgress = (id) => {
-    if (id) clearInterval(id);
-    setProgressInterval(null);
-    setLoadingProgress(100);
-  };
-
   const generateWeeklyPlan = async () => {
     setLoading(true);
     try {
       // ── STEP 1: Fetch real recipes from Supabase ──
-      setLoadingMsg('Fetching recipes from database...');
-      setLoadingProgress(0);
-      const p1 = startProgress(0, 20, 2000);
+      setLoadingMsg('Step 1 of 3 — Fetching recipes...');
+      setLoadingProgress(5);
       const database = await fetchRecipesFromDB();
-      stopProgress(p1);
+      setLoadingProgress(30);
+      setLoadingMsg('Step 2 of 3 — AI is building your plan...');
 
       // Validate every category exists and has items
       const requiredKeys = ['proteins', 'carbs', 'vegetables', 'fats', 'snacks'];
@@ -215,8 +192,6 @@ const NutritionPlanner = () => {
       }
 
       // ── STEP 2: Ask AI to build a 7-day plan using real recipes ──
-      setLoadingMsg('Building your 7-day meal plan...');
-      const p2 = startProgress(25, 92, 12000); // reduced from 22s — prompt is now 5× smaller
       const { calories, protein, carbs, fat } = calculateMacros();
 
       // Shuffle each category independently so every generation sees a fresh
@@ -246,13 +221,15 @@ const NutritionPlanner = () => {
       const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
 Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Available foods (id:name:macros): ${foodList}
-Return ONLY raw JSON (no markdown fences):
-{"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY the exact id values from the list above.`;
+Return ONLY raw JSON (no markdown fences). Totals are NOT required — omit all totals fields:
+{"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","multiplier":1.0,"reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
+Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above.`;
 
-      const planData = await callAPI(planPrompt, 6000); // 6000 safely covers full 7-day JSON (~5500 tokens) with buffer
-      stopProgress(p2);
-      setLoadingProgress(100);
+      setLoadingProgress(70);
+      setLoadingMsg('Step 2 of 3 — AI is building your plan...');
+      const planData = await callAPI(planPrompt, 5500); // items-only JSON needs ~4100 tokens + 1400 buffer
+      setLoadingProgress(90);
+      setLoadingMsg('Step 3 of 3 — Calculating your macros...');
 
       if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
         throw new Error('Meal plan generation failed. Please try again.');
@@ -296,6 +273,8 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
         fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
       }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
 
+      setLoadingProgress(100);
+      setLoadingMsg('Done!');
       setWeeklyPlan(verifiedPlan);
       setStep(4);
 
@@ -303,7 +282,6 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
       console.error('Error:', error);
       alert('Error: ' + error.message);
     } finally {
-      if (progressInterval) clearInterval(progressInterval);
       setLoading(false);
       setLoadingMsg('');
       setLoadingProgress(0);
@@ -653,9 +631,9 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               <div className="progress-fill" style={{width: loadingProgress + '%'}} />
             </div>
             <div className="progress-steps">
-              <span className={loadingProgress >= 20 ? 'ps-done' : 'ps-pending'}>✓ Recipes loaded</span>
-              <span className={loadingProgress >= 92 ? 'ps-done' : loadingProgress >= 25 ? 'ps-active' : 'ps-pending'}>⏳ AI building plan</span>
-              <span className={loadingProgress >= 100 ? 'ps-done' : 'ps-pending'}>✓ Ready!</span>
+              <span className={loadingProgress >= 30 ? 'ps-done' : loadingProgress >= 5 ? 'ps-active' : 'ps-pending'}>{loadingProgress >= 30 ? '✓' : '⏳'} Recipes fetched</span>
+              <span className={loadingProgress >= 90 ? 'ps-done' : loadingProgress >= 30 ? 'ps-active' : 'ps-pending'}>{loadingProgress >= 90 ? '✓' : loadingProgress >= 30 ? '⏳' : '○'} AI building plan</span>
+              <span className={loadingProgress >= 100 ? 'ps-done' : loadingProgress >= 90 ? 'ps-active' : 'ps-pending'}>{loadingProgress >= 100 ? '✓' : loadingProgress >= 90 ? '⏳' : '○'} Calculating macros</span>
             </div>
           </div>
         )}
