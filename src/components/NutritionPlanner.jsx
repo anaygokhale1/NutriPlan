@@ -218,7 +218,7 @@ const NutritionPlanner = () => {
 
       // ── STEP 2: Ask AI to build a 7-day plan using real recipes ──
       setLoadingMsg('Building your 7-day meal plan...');
-      const p2 = startProgress(25, 92, 22000);
+      const p2 = startProgress(25, 92, 12000); // reduced from 22s — prompt is now 5× smaller
       const { calories, protein, carbs, fat } = calculateMacros();
 
       // Shuffle each category independently so every generation sees a fresh
@@ -252,7 +252,7 @@ Return ONLY raw JSON (no markdown fences):
 {"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
 Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 15 words. Use ONLY the exact id values from the list above.`;
 
-      const planData = await callAPI(planPrompt, 8000);
+      const planData = await callAPI(planPrompt, 2500); // reduced from 8000 — actual output is ~2000 tokens
       stopProgress(p2);
       setLoadingProgress(100);
 
