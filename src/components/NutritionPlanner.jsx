@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from 'react';
-import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Image as ImageIcon, Download, ShoppingCart } from 'lucide-react';
+import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Download, ShoppingCart } from 'lucide-react';
 
 const NutritionPlanner = () => {
   const [step, setStep] = useState(1);
@@ -60,37 +60,61 @@ const NutritionPlanner = () => {
       ? (10 * weightKg) + (6.25 * heightCm) - (5 * age) + 5
       : (10 * weightKg) + (6.25 * heightCm) - (5 * age) - 161;
 
-    // Activity multiplier — includes custom activities via keyword detection
-    const allActivities = [
+    // FIX 4: Score EVERY activity independently and take the highest multiplier
+    const activityText = [
       ...userData.activities,
       ...(userData.customActivities ? [userData.customActivities] : [])
     ].join(' ').toLowerCase();
-    const mult = allActivities.includes('sport') || allActivities.includes('team') ? 1.65 :
-      allActivities.includes('run') || allActivities.includes('cardio') ? 1.6 :
-      allActivities.includes('gym') || allActivities.includes('weight') || allActivities.includes('lift') ? 1.55 :
-      allActivities.includes('swim') || allActivities.includes('yoga') || allActivities.includes('bike') || allActivities.includes('cycl') ? 1.5 :
-      allActivities.includes('walk') || allActivities.includes('light') ? 1.375 : 1.2;
+    const activityScores = [
+      { keywords: ['sport','team'],                                    mult: 1.65 },
+      { keywords: ['run','cardio'],                                    mult: 1.60 },
+      { keywords: ['gym','weight','lift'],                             mult: 1.55 },
+      { keywords: ['swim','yoga','bike','cycl','pilates','martial'],   mult: 1.50 },
+      { keywords: ['walk','light','hike'],                             mult: 1.375 },
+      { keywords: ['sedentary','desk','inactive'],                     mult: 1.20 },
+    ];
+    const mult = activityScores.reduce((best, { keywords, mult: m }) => {
+      return keywords.some(kw => activityText.includes(kw)) ? Math.max(best, m) : best;
+    }, 1.2);
 
     const hasGoal = (g) => userData.goals.includes(g);
     let calories = bmr * mult;
     if (hasGoal('Weight Loss')) calories -= 500;
     if (hasGoal('Muscle Gain') || hasGoal('Weight Gain')) calories += 300;
+    // FIX 6: Never go below clinical minimum — 1200 kcal for females, 1500 for males
+    const calorieFloor = userData.sex === 'Female' ? 1200 : 1500;
+    calories = Math.max(calories, calorieFloor);
 
-    // Protein/fat targets — prioritise muscle gain if both selected
+    // FIX 7: Blended macro split when conflicting goals are combined
     let protein, carbs, fat;
-    if (hasGoal('Muscle Gain') || hasGoal('Athletic Performance')) {
-      protein = weightKg * 2; fat = weightKg * 1;
+    if (hasGoal('Muscle Gain') && hasGoal('Weight Loss')) {
+      // Body recomposition: high protein, moderate fat to preserve muscle while losing fat
+      protein = weightKg * 2.4; fat = weightKg * 0.8;
+    } else if (hasGoal('Muscle Gain') || hasGoal('Athletic Performance')) {
+      protein = weightKg * 2.0; fat = weightKg * 1.0;
     } else if (hasGoal('Weight Loss')) {
       protein = weightKg * 2.2; fat = weightKg * 0.8;
+    } else if (hasGoal('Weight Gain')) {
+      protein = weightKg * 1.8; fat = weightKg * 1.2;
     } else {
-      protein = weightKg * 1.6; fat = weightKg * 1;
+      protein = weightKg * 1.6; fat = weightKg * 1.0;
     }
     carbs = (calories - (protein * 4) - (fat * 9)) / 4;
+    // FIX 8: Detect macro conflict — if protein+fat already exceeds calories, carbs go negative
+    const carbsNegative = carbs < 0;
+    // If carbs negative, trim fat down until carbs reach minimum 50g (a safe floor)
+    if (carbsNegative) {
+      const minCarbs = 50;
+      fat = (calories - (protein * 4) - (minCarbs * 4)) / 9;
+      fat = Math.max(fat, weightKg * 0.5); // never below 0.5g/kg
+      carbs = (calories - (protein * 4) - (fat * 9)) / 4;
+    }
     return {
-      calories: Math.round(calories),
-      protein:  Math.round(protein),
-      carbs:    Math.round(Math.max(0, carbs)),
-      fat:      Math.round(fat),
+      calories:      Math.round(calories),
+      protein:       Math.round(protein),
+      carbs:         Math.round(Math.max(0, carbs)),
+      fat:           Math.round(fat),
+      macroConflict: carbsNegative,
     };
   };
 
@@ -217,7 +241,48 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
         throw new Error('Meal plan generation failed. Please try again.');
       }
 
-      setWeeklyPlan(planData);
+      // FIX 2: Recompute ALL totals from real recipe data — never trust AI arithmetic
+      const calcTotals = (items) => items.reduce((acc, item) => {
+        const food = allFoods.find(f => f.id === item.id);
+        if (!food) return acc;
+        const m = item.multiplier || 1;
+        return {
+          calories: acc.calories + food.calories * m,
+          protein:  acc.protein  + food.protein  * m,
+          carbs:    acc.carbs    + food.carbs     * m,
+          fat:      acc.fat      + food.fat       * m,
+          fiber:    acc.fiber    + (food.fiber || 0) * m,
+          cost:     acc.cost     + food.cost      * m,
+        };
+      }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+
+      const verifiedPlan = { ...planData };
+      verifiedPlan.days = planData.days.map(day => {
+        const verifiedMeals = {};
+        ['breakfast', 'lunch', 'snack', 'dinner'].forEach(mealType => {
+          const meal = day.meals[mealType] || { items: [] };
+          verifiedMeals[mealType] = { items: meal.items, totals: calcTotals(meal.items) };
+        });
+        const dailyTotals = ['breakfast', 'lunch', 'snack', 'dinner'].reduce((acc, mt) => ({
+          calories: acc.calories + verifiedMeals[mt].totals.calories,
+          protein:  acc.protein  + verifiedMeals[mt].totals.protein,
+          carbs:    acc.carbs    + verifiedMeals[mt].totals.carbs,
+          fat:      acc.fat      + verifiedMeals[mt].totals.fat,
+          fiber:    acc.fiber    + (verifiedMeals[mt].totals.fiber || 0),
+          cost:     acc.cost     + verifiedMeals[mt].totals.cost,
+        }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+        return { ...day, meals: verifiedMeals, dailyTotals };
+      });
+      verifiedPlan.weeklyTotals = verifiedPlan.days.reduce((acc, d) => ({
+        calories: acc.calories + d.dailyTotals.calories,
+        protein:  acc.protein  + d.dailyTotals.protein,
+        carbs:    acc.carbs    + d.dailyTotals.carbs,
+        fat:      acc.fat      + d.dailyTotals.fat,
+        fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
+        cost:     acc.cost     + (d.dailyTotals.cost || 0),
+      }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+
+      setWeeklyPlan(verifiedPlan);
       setStep(4);
 
     } catch (error) {
@@ -308,9 +373,10 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               protein:  acc.protein  + food.protein  * m,
               carbs:    acc.carbs    + food.carbs     * m,
               fat:      acc.fat      + food.fat       * m,
+              fiber:    acc.fiber    + (food.fiber || 0) * m,
               cost:     acc.cost     + food.cost      * m,
             };
-          }, { calories: 0, protein: 0, carbs: 0, fat: 0, cost: 0 });
+          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
           // Recalculate daily totals
           updated.days[dayIndex].dailyTotals = ['breakfast', 'lunch', 'snack', 'dinner'].reduce((acc, meal) => {
             const t = updated.days[dayIndex].meals[meal].totals;
@@ -319,9 +385,19 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               protein:  acc.protein  + t.protein,
               carbs:    acc.carbs    + t.carbs,
               fat:      acc.fat      + t.fat,
+              fiber:    acc.fiber    + (t.fiber || 0),
               cost:     acc.cost     + t.cost,
             };
-          }, { calories: 0, protein: 0, carbs: 0, fat: 0, cost: 0 });
+          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+          // FIX 1: Recalculate weeklyTotals from all 7 days so summary strip stays accurate
+          updated.weeklyTotals = updated.days.reduce((acc, d) => ({
+            calories: acc.calories + d.dailyTotals.calories,
+            protein:  acc.protein  + d.dailyTotals.protein,
+            carbs:    acc.carbs    + d.dailyTotals.carbs,
+            fat:      acc.fat      + d.dailyTotals.fat,
+            fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
+            cost:     acc.cost     + (d.dailyTotals.cost || 0),
+          }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
         }
         return updated;
       });
@@ -558,6 +634,11 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               </div>
             ))}
           </div>
+          {macros.macroConflict && (
+            <div className="macro-warning">
+              ⚠️ Your combined goals created a macro conflict — fat has been adjusted to ensure a minimum of 50g carbs. Consider selecting fewer conflicting goals.
+            </div>
+          )}
         </div>
         {loading && (
           <div className="progress-wrap">
@@ -840,6 +921,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               ['Avg Protein',  Math.round(weeklyPlan.weeklyTotals.protein / 7), 'g'],
               ['Avg Carbs',    Math.round(weeklyPlan.weeklyTotals.carbs / 7), 'g'],
               ['Avg Fat',      Math.round(weeklyPlan.weeklyTotals.fat / 7), 'g'],
+              ['Avg Fiber',    Math.round((weeklyPlan.weeklyTotals.fiber || 0) / 7), 'g'],
               ['Avg Cost',     '$' + ((weeklyPlan.weeklyTotals.cost || 0) / 7).toFixed(2), ''],
             ].map(([label, val, unit]) => (
               <div key={label} className="summary-pill">
@@ -879,6 +961,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               <span className="badge">P {Math.round(currentDay.dailyTotals.protein)}g</span>
               <span className="badge">C {Math.round(currentDay.dailyTotals.carbs)}g</span>
               <span className="badge">F {Math.round(currentDay.dailyTotals.fat)}g</span>
+              <span className="badge badge-fiber">🌿 {Math.round(currentDay.dailyTotals.fiber || 0)}g fiber</span>
               <span className="badge badge-cost">${(currentDay.dailyTotals.cost || 0).toFixed(2)}</span>
             </div>
           </div>
@@ -915,9 +998,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                     const isSwapping = swapping?.dayIndex === selectedDay && swapping?.mealType === mealType && swapping?.itemId === item.id;
                     return (
                       <div key={idx} className="food-row">
-                        <div className="food-icon-wrap">
-                          <ImageIcon size={18} color="#4a7c59" />
-                        </div>
                         <div className="food-details">
                           <div className="food-top-row">
                             <span className="food-name">{food.name}</span>
@@ -929,7 +1009,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                             </div>
                           </div>
                           <div className="food-portion">🍽 {food.portion_size}</div>
-                          <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · ${(food.cost * m).toFixed(2)}</div>
+                          <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · Fb{Math.round((food.fiber || 0) * m)}g · ${(food.cost * m).toFixed(2)}</div>
                           <div className="food-reason"><Info size={12} /><span>{item.reasoning}</span></div>
                         </div>
                       </div>
@@ -1073,6 +1153,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .tag-budget { background: #3d6b4a; color: white; border-color: #3d6b4a; }
         .macro-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 0.6rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e8e5df; }
         .macro-card { background: white; border-radius: 8px; padding: 0.875rem 0.5rem; text-align: center; border: 1.5px solid #e0ddd7; }
+        .macro-warning { background: #fff8e1; border: 1.5px solid #f59e0b; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.82rem; color: #92400e; margin-top: 0.75rem; line-height: 1.5; }
         .macro-value { font-size: 1.4rem; font-weight: 700; color: #3d6b4a; }
         .macro-label { font-size: 0.72rem; color: #888; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; }
         .plan-view { width: 100%; }
@@ -1094,6 +1175,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .day-macro-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
         .badge { background: white; border: 1px solid #e0ddd7; border-radius: 20px; padding: 0.25rem 0.6rem; font-size: 0.78rem; font-weight: 600; color: #555; }
         .badge-cost { color: #3d6b4a; border-color: #3d6b4a; }
+        .badge-fiber { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
         .meals-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.875rem; }
         .meal-card { background: white; border-radius: 10px; border: 1.5px solid #e8e5df; overflow: hidden; }
         .meal-card-header { background: #f5f3ef; padding: 0.7rem 0.875rem; border-bottom: 1px solid #e8e5df; }
@@ -1102,7 +1184,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .meal-totals-row { display: flex; flex-wrap: wrap; gap: 0.3rem; font-size: 0.75rem; color: #888; font-weight: 500; }
         .meal-items { padding: 0.625rem; display: flex; flex-direction: column; gap: 0.5rem; }
         .food-row { display: flex; gap: 0.5rem; align-items: flex-start; background: #faf8f5; border-radius: 8px; padding: 0.625rem; border: 1px solid #edeae4; }
-        .food-icon-wrap { width: 28px; height: 28px; min-width: 28px; background: #e8f5e9; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
         .food-details { flex: 1; min-width: 0; }
         .food-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.4rem; margin-bottom: 0.25rem; flex-wrap: wrap; }
         .food-name { font-weight: 600; font-size: 0.9rem; color: #1e1e1e; }
