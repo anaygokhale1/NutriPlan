@@ -252,7 +252,7 @@ Return ONLY raw JSON (no markdown fences):
 {"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
 Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 15 words. Use ONLY the exact id values from the list above.`;
 
-      const planData = await callAPI(planPrompt, 2500); // reduced from 8000 — actual output is ~2000 tokens
+      const planData = await callAPI(planPrompt, 4500); // 8000 was too slow, 2500 cut off output — 4500 covers ~3400 needed + 1100 buffer
       stopProgress(p2);
       setLoadingProgress(100);
 
