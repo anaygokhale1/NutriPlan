@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from 'react';
-import { Utensils, Target, Activity, DollarSign, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Download, ShoppingCart } from 'lucide-react';
+import { Utensils, Target, Activity, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Download, ShoppingCart } from 'lucide-react';
 
 const NutritionPlanner = () => {
   const [step, setStep] = useState(1);
@@ -12,7 +12,7 @@ const NutritionPlanner = () => {
     goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
     activities: [], customActivities: '',
-    preferences: [], restrictions: [], budget: '',
+    preferences: [], restrictions: [],
   });
   const [foodDatabase, setFoodDatabase] = useState(null);
   const [weeklyPlan, setWeeklyPlan] = useState(null);
@@ -23,7 +23,6 @@ const NutritionPlanner = () => {
   const activityOptions = ['Gym (3-5x/week)', 'Running/Cardio', 'Sports (Team/Individual)', 'Walking/Light Activity', 'Sedentary'];
   const cuisinePreferences = ['American', 'Italian', 'Asian', 'Mexican', 'Indian', 'Mediterranean', 'Greek', 'Middle Eastern', 'Thai', 'Japanese', 'Chinese'];
   const dietaryRestrictions = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Halal', 'Kosher', 'Keto', 'Paleo', 'No Restrictions'];
-  const budgetOptions = ['Budget ($5-10/day)', 'Moderate ($10-20/day)', 'Flexible ($20+/day)'];
 
   const updateUserData = (field, value) => setUserData(prev => ({ ...prev, [field]: value }));
   const toggleArrayField = (field, value) => setUserData(prev => ({
@@ -150,7 +149,6 @@ const NutritionPlanner = () => {
       body: JSON.stringify({
         cuisines:     userData.preferences,
         restrictions: userData.restrictions,
-        budget:       userData.budget,
       }),
     });
     if (!response.ok) {
@@ -242,17 +240,17 @@ const NutritionPlanner = () => {
       // We deliberately omit cooking_time, instructions, ingredients etc.
       // because the AI doesn't need them to pick meals — less text = faster response.
       const foodList = sampledFoods
-        .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g,$${f.cost})`)
+        .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
         .join(', ');
 
       const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
 Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Available foods (id:name:macros): ${foodList}
 Return ONLY raw JSON (no markdown fences):
-{"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0,"cost":0}}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 15 words. Use ONLY the exact id values from the list above.`;
+{"weeklyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0},"days":[{"dayNumber":1,"dayName":"Monday","dailyTotals":{"calories":0,"protein":0,"carbs":0,"fat":0},"meals":{"breakfast":{"items":[{"id":"use-exact-id-from-list","multiplier":1.0,"reasoning":"brief reason"}],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"lunch":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"snack":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}},"dinner":{"items":[],"totals":{"calories":0,"protein":0,"carbs":0,"fat":0}}}}]}
+Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY the exact id values from the list above.`;
 
-      const planData = await callAPI(planPrompt, 4500); // 8000 was too slow, 2500 cut off output — 4500 covers ~3400 needed + 1100 buffer
+      const planData = await callAPI(planPrompt, 6000); // 6000 safely covers full 7-day JSON (~5500 tokens) with buffer
       stopProgress(p2);
       setLoadingProgress(100);
 
@@ -271,9 +269,8 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
           carbs:    acc.carbs    + food.carbs     * m,
           fat:      acc.fat      + food.fat       * m,
           fiber:    acc.fiber    + (food.fiber || 0) * m,
-          cost:     acc.cost     + food.cost      * m,
         };
-      }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+      }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
 
       const verifiedPlan = { ...planData };
       verifiedPlan.days = planData.days.map(day => {
@@ -288,8 +285,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
           carbs:    acc.carbs    + verifiedMeals[mt].totals.carbs,
           fat:      acc.fat      + verifiedMeals[mt].totals.fat,
           fiber:    acc.fiber    + (verifiedMeals[mt].totals.fiber || 0),
-          cost:     acc.cost     + verifiedMeals[mt].totals.cost,
-        }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+        }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
         return { ...day, meals: verifiedMeals, dailyTotals };
       });
       verifiedPlan.weeklyTotals = verifiedPlan.days.reduce((acc, d) => ({
@@ -298,8 +294,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
         carbs:    acc.carbs    + d.dailyTotals.carbs,
         fat:      acc.fat      + d.dailyTotals.fat,
         fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
-        cost:     acc.cost     + (d.dailyTotals.cost || 0),
-      }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+      }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
 
       setWeeklyPlan(verifiedPlan);
       setStep(4);
@@ -393,9 +388,8 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               carbs:    acc.carbs    + food.carbs     * m,
               fat:      acc.fat      + food.fat       * m,
               fiber:    acc.fiber    + (food.fiber || 0) * m,
-              cost:     acc.cost     + food.cost      * m,
             };
-          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
           // Recalculate daily totals
           updated.days[dayIndex].dailyTotals = ['breakfast', 'lunch', 'snack', 'dinner'].reduce((acc, meal) => {
             const t = updated.days[dayIndex].meals[meal].totals;
@@ -405,9 +399,8 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               carbs:    acc.carbs    + t.carbs,
               fat:      acc.fat      + t.fat,
               fiber:    acc.fiber    + (t.fiber || 0),
-              cost:     acc.cost     + t.cost,
             };
-          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+          }, { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
           // FIX 1: Recalculate weeklyTotals from all 7 days so summary strip stays accurate
           updated.weeklyTotals = updated.days.reduce((acc, d) => ({
             calories: acc.calories + d.dailyTotals.calories,
@@ -415,8 +408,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             carbs:    acc.carbs    + d.dailyTotals.carbs,
             fat:      acc.fat      + d.dailyTotals.fat,
             fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
-            cost:     acc.cost     + (d.dailyTotals.cost || 0),
-          }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, cost: 0 });
+          }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
         }
         return updated;
       });
@@ -561,7 +553,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
 
   const renderStep2 = () => (
     <div className="form-section">
-      <h2>Food Preferences & Budget</h2>
+      <h2>Food Preferences</h2>
       <p className="subtitle">Help us customize your meal plan</p>
       <div className="input-group">
         <label><Utensils size={16} /> Cuisine Preferences</label>
@@ -579,17 +571,10 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           ))}
         </div>
       </div>
-      <div className="input-group">
-        <label><DollarSign size={16} /> Daily Budget</label>
-        <div className="button-grid">
-          {budgetOptions.map(b => (
-            <button key={b} className={`option-btn ${userData.budget === b ? 'active' : ''}`} onClick={() => updateUserData('budget', b)}>{b}</button>
-          ))}
-        </div>
-      </div>
+
       <div className="button-row">
         <button className="back-btn" onClick={() => setStep(1)}>← Back</button>
-        <button className="next-btn" onClick={() => setStep(3)} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0 || !userData.budget}>
+        <button className="next-btn" onClick={() => setStep(3)} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0}>
           Review & Generate →
         </button>
       </div>
@@ -639,10 +624,9 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             <div className="tag-list">{userData.preferences.map(p => <span key={p} className="tag">{p}</span>)}</div>
           </div>
           <div className="review-section">
-            <div className="review-label">Restrictions & Budget</div>
+            <div className="review-label">Dietary Restrictions</div>
             <div className="tag-list">
               {userData.restrictions.map(r => <span key={r} className="tag">{r}</span>)}
-              <span className="tag tag-budget">{userData.budget}</span>
             </div>
           </div>
           <div className="macro-row">
@@ -746,11 +730,11 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
       // ── Sheet 1: Weekly Overview ──
       const overviewRows = [
         ['NutriPlan — 7-Day Meal Plan'],
-        ['Goals', userData.goals.join(', '), 'Budget', userData.budget],
+        ['Goals', userData.goals.join(', ')],
         ['Daily Calorie Target', calculateMacros().calories + ' kcal',
          'Daily Protein Target', calculateMacros().protein + 'g'],
         [],
-        ['Day', 'Total Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Est. Cost ($)'],
+        ['Day', 'Total Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)'],
       ];
       weeklyPlan.days.forEach(day => {
         overviewRows.push([
@@ -759,7 +743,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           Math.round(day.dailyTotals.protein),
           Math.round(day.dailyTotals.carbs),
           Math.round(day.dailyTotals.fat),
-          parseFloat((day.dailyTotals.cost || 0).toFixed(2)),
         ]);
       });
       overviewRows.push([]);
@@ -769,7 +752,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         Math.round(weeklyPlan.weeklyTotals.protein / 7),
         Math.round(weeklyPlan.weeklyTotals.carbs / 7),
         Math.round(weeklyPlan.weeklyTotals.fat / 7),
-        parseFloat(((weeklyPlan.weeklyTotals.cost || 0) / 7).toFixed(2)),
       ]);
       const wsOverview = XLSX.utils.aoa_to_sheet(overviewRows);
       wsOverview['!cols'] = [22,16,14,12,10,12].map(w => ({ wch: w }));
@@ -781,7 +763,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
       weeklyPlan.days.forEach(day => {
         const rows = [
           [day.dayName + ' Meal Plan'],
-          ['Meal', 'Food Item', 'Portion', 'Cuisine', 'Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Cost ($)', 'Why This Food'],
+          ['Meal', 'Food Item', 'Portion', 'Cuisine', 'Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Why This Food'],
         ];
         mealOrder.forEach(mealType => {
           const meal = day.meals[mealType];
@@ -799,7 +781,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               Math.round(food.protein * m),
               Math.round(food.carbs * m),
               Math.round(food.fat * m),
-              parseFloat((food.cost * m).toFixed(2)),
               item.reasoning || '',
             ]);
           });
@@ -812,7 +793,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             Math.round(meal.totals.protein),
             Math.round(meal.totals.carbs),
             Math.round(meal.totals.fat),
-            parseFloat((meal.totals.cost || 0).toFixed(2)),
             '',
           ]);
           rows.push([]);
@@ -824,11 +804,10 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           Math.round(day.dailyTotals.protein),
           Math.round(day.dailyTotals.carbs),
           Math.round(day.dailyTotals.fat),
-          parseFloat((day.dailyTotals.cost || 0).toFixed(2)),
           '',
         ]);
         const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols'] = [14,22,10,12,10,12,10,8,10,30].map(w => ({ wch: w }));
+        ws['!cols'] = [14,22,10,12,10,12,10,8,30].map(w => ({ wch: w }));
         XLSX.utils.book_append_sheet(wb, ws, day.dayName.slice(0, 3));
       });
 
@@ -941,7 +920,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               ['Avg Carbs',    Math.round(weeklyPlan.weeklyTotals.carbs / 7), 'g'],
               ['Avg Fat',      Math.round(weeklyPlan.weeklyTotals.fat / 7), 'g'],
               ['Avg Fiber',    Math.round((weeklyPlan.weeklyTotals.fiber || 0) / 7), 'g'],
-              ['Avg Cost',     '$' + ((weeklyPlan.weeklyTotals.cost || 0) / 7).toFixed(2), ''],
             ].map(([label, val, unit]) => (
               <div key={label} className="summary-pill">
                 <span className="summary-val">{val}{unit}</span>
@@ -981,7 +959,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               <span className="badge">C {Math.round(currentDay.dailyTotals.carbs)}g</span>
               <span className="badge">F {Math.round(currentDay.dailyTotals.fat)}g</span>
               <span className="badge badge-fiber">🌿 {Math.round(currentDay.dailyTotals.fiber || 0)}g fiber</span>
-              <span className="badge badge-cost">${(currentDay.dailyTotals.cost || 0).toFixed(2)}</span>
             </div>
           </div>
 
@@ -1028,7 +1005,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                             </div>
                           </div>
                           <div className="food-portion">🍽 {food.portion_size}</div>
-                          <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · Fb{Math.round((food.fiber || 0) * m)}g · ${(food.cost * m).toFixed(2)}</div>
+                          <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · Fb{Math.round((food.fiber || 0) * m)}g</div>
                           <div className="food-reason"><Info size={12} /><span>{item.reasoning}</span></div>
                         </div>
                       </div>
@@ -1074,7 +1051,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               <div><strong>Cuisine</strong><br />{selectedRecipe.cuisine}</div>
               <div><strong>Cook Time</strong><br />{selectedRecipe.cooking_time}</div>
               <div><strong>Portion</strong><br />{selectedRecipe.portion_size}</div>
-              <div><strong>Cost</strong><br />${(selectedRecipe.cost || 0).toFixed(2)}</div>
             </div>
             <div className="modal-nutrition">
               {[['Calories', selectedRecipe.calories, 'kcal'], ['Protein', selectedRecipe.protein, 'g'], ['Carbs', selectedRecipe.carbs, 'g'], ['Fat', selectedRecipe.fat, 'g'], ['Fiber', selectedRecipe.fiber, 'g']].map(([n, v, u]) => (
@@ -1169,7 +1145,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .review-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.4px; color: #888; font-weight: 600; margin-bottom: 0.4rem; }
         .tag-list { display: flex; flex-wrap: wrap; gap: 0.4rem; }
         .tag { background: white; padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.82rem; border: 1px solid #e0ddd7; color: #1e1e1e; }
-        .tag-budget { background: #3d6b4a; color: white; border-color: #3d6b4a; }
         .macro-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 0.6rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e8e5df; }
         .macro-card { background: white; border-radius: 8px; padding: 0.875rem 0.5rem; text-align: center; border: 1.5px solid #e0ddd7; }
         .macro-warning { background: #fff8e1; border: 1.5px solid #f59e0b; border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.82rem; color: #92400e; margin-top: 0.75rem; line-height: 1.5; }
@@ -1193,7 +1168,6 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         .day-panel-header h3 { font-family: 'Crimson Text', serif; font-size: 1.5rem; color: #1e1e1e; }
         .day-macro-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
         .badge { background: white; border: 1px solid #e0ddd7; border-radius: 20px; padding: 0.25rem 0.6rem; font-size: 0.78rem; font-weight: 600; color: #555; }
-        .badge-cost { color: #3d6b4a; border-color: #3d6b4a; }
         .badge-fiber { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
         .meals-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.875rem; }
         .meal-card { background: white; border-radius: 10px; border: 1.5px solid #e8e5df; overflow: hidden; }
