@@ -11,7 +11,7 @@ const NutritionPlanner = () => {
     goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
     activities: [], customActivities: '',
-    preferences: [], restrictions: [],
+    preferences: [], restrictions: [], meatOptions: [], foodAllergies: [],
   });
   const [foodDatabase, setFoodDatabase] = useState(null);
   const [weeklyPlan, setWeeklyPlan] = useState(null);
@@ -22,6 +22,8 @@ const NutritionPlanner = () => {
   const activityOptions = ['Gym (3-5x/week)', 'Running/Cardio', 'Sports (Team/Individual)', 'Walking/Light Activity', 'Sedentary'];
   const cuisinePreferences = ['American', 'Italian', 'Asian', 'Mexican', 'Indian', 'Mediterranean', 'Greek', 'Middle Eastern', 'Thai', 'Japanese', 'Chinese'];
   const dietaryRestrictions = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Halal', 'Kosher', 'Keto', 'Paleo', 'No Restrictions'];
+  const meatOptionsList = ['All Meats', 'Chicken & Poultry', 'Seafood & Fish', 'Red Meat (Beef/Lamb)', 'Pork', 'Game Meat', 'Processed Meats'];
+  const foodAllergyList = ['No Allergies', 'Gluten / Wheat', 'Tree Nuts', 'Peanuts', 'Shellfish', 'Fish', 'Dairy / Lactose', 'Eggs', 'Soy', 'Sesame', 'Mustard', 'Sulphites'];
 
   const updateUserData = (field, value) => setUserData(prev => ({ ...prev, [field]: value }));
   const toggleArrayField = (field, value) => setUserData(prev => ({
@@ -148,6 +150,8 @@ const NutritionPlanner = () => {
       body: JSON.stringify({
         cuisines:     userData.preferences,
         restrictions: userData.restrictions,
+        meatOptions:  userData.meatOptions,
+        foodAllergies: userData.foodAllergies.filter(a => a !== 'No Allergies'),
       }),
     });
     if (!response.ok) {
@@ -218,8 +222,16 @@ const NutritionPlanner = () => {
         .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
         .join(', ');
 
+      const meatRestriction = userData.meatOptions.length > 0
+        ? `Allowed meats: ${userData.meatOptions.join(', ')} only.`
+        : '';
+      const allergyRestriction = userData.foodAllergies.filter(a => a !== 'No Allergies').length > 0
+        ? `STRICTLY exclude recipes containing: ${userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ')}.`
+        : '';
+
       const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
 Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
+Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Available foods (id:name:macros): ${foodList}
 Return ONLY raw JSON (no markdown fences). Totals are NOT required — omit all totals fields:
 {"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","multiplier":1.0,"reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
@@ -333,7 +345,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
 
       const prompt = `You are a nutritionist. Swap a ${currentCategory} item for ${mealLabels[mealType]}.
 Current item: ${currentFood.name} (${currentFood.calories}cal, P${currentFood.protein}g, C${currentFood.carbs}g, F${currentFood.fat}g).
-User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.join(', ')}.
+User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.join(', ')}. ${userData.meatOptions.length > 0 ? 'Allowed meats: ' + userData.meatOptions.join(', ') + '.' : ''} ${userData.foodAllergies.filter(a => a !== 'No Allergies').length > 0 ? 'Exclude allergens: ' + userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ') + '.' : ''}
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
@@ -447,7 +459,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             type="number" min="1"
             value={userData.weight}
             onChange={(e) => updateUserData('weight', e.target.value)}
-            placeholder={userData.weightUnit === 'kg' ? '70' : '155'}
+            placeholder='Enter value'
           />
         </div>
 
@@ -459,7 +471,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               type="number" min="1"
               value={userData.height}
               onChange={(e) => updateUserData('height', e.target.value)}
-              placeholder="175"
+              placeholder='Enter value'
             />
           </div>
         ) : (
@@ -470,14 +482,14 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                 type="number" min="0" max="8"
                 value={userData.heightFt || ''}
                 onChange={(e) => updateUserData('heightFt', e.target.value)}
-                placeholder="5"
+                placeholder='ft'
               />
               <span className="height-sep">ft</span>
               <input
                 type="number" min="0" max="11"
                 value={userData.heightIn || ''}
                 onChange={(e) => updateUserData('heightIn', e.target.value)}
-                placeholder="9"
+                placeholder='in'
               />
               <span className="height-sep">in</span>
             </div>
@@ -491,7 +503,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
             type="number" min="10" max="100"
             value={userData.age}
             onChange={(e) => updateUserData('age', e.target.value)}
-            placeholder="25"
+            placeholder='Enter value'
           />
         </div>
 
@@ -529,35 +541,106 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
     </div>
   );
 
-  const renderStep2 = () => (
-    <div className="form-section">
-      <h2>Food Preferences</h2>
-      <p className="subtitle">Help us customize your meal plan</p>
-      <div className="input-group">
-        <label><Utensils size={16} /> Cuisine Preferences</label>
-        <div className="button-grid">
-          {cuisinePreferences.map(pref => (
-            <button key={pref} className={`option-btn ${userData.preferences.includes(pref) ? 'active' : ''}`} onClick={() => toggleArrayField('preferences', pref)}>{pref}</button>
-          ))}
-        </div>
-      </div>
-      <div className="input-group">
-        <label><ChefHat size={16} /> Dietary Restrictions</label>
-        <div className="button-grid">
-          {dietaryRestrictions.map(r => (
-            <button key={r} className={`option-btn ${userData.restrictions.includes(r) ? 'active' : ''}`} onClick={() => toggleArrayField('restrictions', r)}>{r}</button>
-          ))}
-        </div>
-      </div>
+  const renderStep2 = () => {
+    const showMeatOptions = userData.restrictions.length > 0 &&
+      !userData.restrictions.includes('Vegetarian') &&
+      !userData.restrictions.includes('Vegan');
 
-      <div className="button-row">
-        <button className="back-btn" onClick={() => setStep(1)}>← Back</button>
-        <button className="next-btn" onClick={() => setStep(3)} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0}>
-          Review & Generate →
-        </button>
+    const handleMeatToggle = (option) => {
+      if (option === 'All Meats') {
+        // Select all OR deselect all
+        const allSelected = meatOptionsList.every(o => userData.meatOptions.includes(o));
+        updateUserData('meatOptions', allSelected ? [] : [...meatOptionsList]);
+      } else {
+        toggleArrayField('meatOptions', option);
+      }
+    };
+
+    return (
+      <div className="form-section">
+        <h2>Food Preferences</h2>
+        <p className="subtitle">Help us customize your meal plan</p>
+
+        {/* Cuisine Preferences */}
+        <div className="input-group">
+          <label><Utensils size={16} /> Cuisine Preferences</label>
+          <div className="button-grid">
+            {cuisinePreferences.map(pref => (
+              <button key={pref} className={`option-btn ${userData.preferences.includes(pref) ? 'active' : ''}`} onClick={() => toggleArrayField('preferences', pref)}>{pref}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Dietary Restrictions */}
+        <div className="input-group">
+          <label><ChefHat size={16} /> Dietary Restrictions</label>
+          <div className="button-grid">
+            {dietaryRestrictions.map(r => (
+              <button key={r} className={`option-btn ${userData.restrictions.includes(r) ? 'active' : ''}`} onClick={() => toggleArrayField('restrictions', r)}>{r}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Meat Options — only shown if user is NOT vegetarian/vegan */}
+        {showMeatOptions && (
+          <div className="input-group meat-options-group">
+            <label>🥩 Meat Options <span className="label-hint">Select the meats you eat</span></label>
+            <div className="button-grid">
+              {meatOptionsList.map(opt => {
+                const isAllMeats = opt === 'All Meats';
+                const allSelected = meatOptionsList.every(o => userData.meatOptions.includes(o));
+                const isActive = isAllMeats ? allSelected : userData.meatOptions.includes(opt);
+                return (
+                  <button
+                    key={opt}
+                    className={`option-btn ${isActive ? 'active' : ''} ${isAllMeats ? 'select-all-btn' : ''}`}
+                    onClick={() => handleMeatToggle(opt)}
+                  >
+                    {isAllMeats ? '✓ ' : ''}{opt}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="section-hint">Only recipes containing your selected meats will be included in your plan.</p>
+          </div>
+        )}
+
+        {/* Food Allergies */}
+        <div className="input-group">
+          <label>⚠️ Food Allergies <span className="label-hint">Select all that apply</span></label>
+          <div className="button-grid">
+            {foodAllergyList.map(allergy => (
+              <button
+                key={allergy}
+                className={`option-btn ${userData.foodAllergies.includes(allergy) ? 'active' : ''} ${allergy === 'No Allergies' ? 'no-allergy-btn' : ''}`}
+                onClick={() => {
+                  if (allergy === 'No Allergies') {
+                    updateUserData('foodAllergies', ['No Allergies']);
+                  } else {
+                    const without = userData.foodAllergies.filter(a => a !== 'No Allergies');
+                    const updated = without.includes(allergy)
+                      ? without.filter(a => a !== allergy)
+                      : [...without, allergy];
+                    updateUserData('foodAllergies', updated);
+                  }
+                }}
+              >
+                {allergy}
+              </button>
+            ))}
+          </div>
+          <p className="section-hint">Recipes containing these allergens will be excluded from your plan.</p>
+        </div>
+
+        <div className="button-row">
+          <button className="back-btn" onClick={() => setStep(1)}>← Back</button>
+          <button className="next-btn" onClick={() => setStep(3)} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0}>
+            Review & Generate →
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderStep3 = () => {
     const macros = calculateMacros();
@@ -607,6 +690,22 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
               {userData.restrictions.map(r => <span key={r} className="tag">{r}</span>)}
             </div>
           </div>
+          {userData.meatOptions.length > 0 && (
+            <div className="review-section">
+              <div className="review-label">Meat Options</div>
+              <div className="tag-list">
+                {userData.meatOptions.map(m => <span key={m} className="tag tag-meat">🥩 {m}</span>)}
+              </div>
+            </div>
+          )}
+          {userData.foodAllergies.length > 0 && (
+            <div className="review-section">
+              <div className="review-label">Food Allergies</div>
+              <div className="tag-list">
+                {userData.foodAllergies.map(a => <span key={a} className="tag tag-allergy">⚠️ {a}</span>)}
+              </div>
+            </div>
+          )}
           <div className="macro-row">
             {[['Calories', macros.calories, ''], ['Protein', macros.protein, 'g'], ['Carbs', macros.carbs, 'g'], ['Fat', macros.fat, 'g']].map(([label, val, unit]) => (
               <div key={label} className="macro-card">
@@ -1657,6 +1756,16 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         /* ══════════════════════════════════════════
            ANIMATIONS & UTILITIES
         ══════════════════════════════════════════ */
+        /* ── Meat Options & Allergies ── */
+        .label-hint { font-size: 0.72rem; color: var(--text-soft); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+        .section-hint { font-size: 0.78rem; color: var(--text-soft); margin-top: 0.5rem; font-style: italic; font-weight: 500; }
+        .meat-options-group { background: linear-gradient(135deg, #fdf6f0, #fff3eb); border-radius: var(--radius-sm); padding: 1rem; border: 1.5px solid #f4c09a; margin-bottom: 1.5rem; }
+        .select-all-btn { border-color: var(--amber) !important; color: #92400e !important; font-weight: 700 !important; }
+        .select-all-btn.active { background: linear-gradient(135deg, var(--amber-deep), var(--amber)) !important; border-color: transparent !important; color: white !important; }
+        .no-allergy-btn { border-color: var(--green-bright) !important; }
+        .tag-meat { background: #fef3e2; border-color: #f4c09a; color: #92400e; }
+        .tag-allergy { background: #fff1f2; border-color: #fca5a5; color: #991b1b; }
+
         .spin { animation: rotate 0.9s linear infinite; }
         @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
