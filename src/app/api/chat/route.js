@@ -1,43 +1,64 @@
-import { NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 
-export async function POST(request) {
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+export async function POST(req) {
   try {
-    const body = await request.json();
+    const { model, max_tokens, messages } = await req.json();
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const encoder = new TextEncoder();
+    const stream = new TransformStream();
+    const writer = stream.writable.getWriter();
 
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'API key not configured' },
-        { status: 500 }
-      );
-    }
+    (async () => {
+      try {
+        const anthropicStream = anthropic.messages.stream({
+          model: model || 'claude-sonnet-4-20250514',
+          max_tokens: max_tokens || 5500,
+          messages,
+        });
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
+        for await (const chunk of anthropicStream) {
+          if (
+            chunk.type === 'content_block_delta' &&
+            chunk.delta?.type === 'text_delta' &&
+            chunk.delta?.text
+          ) {
+            await writer.write(encoder.encode(chunk.delta.text));
+          }
+        }
+      } catch (err) {
+        await writer.write(encoder.encode(`\n__STREAM_ERROR__:${err.message}`));
+      } finally {
+        await writer.close();
+      }
+    })();
+
+    return new Response(stream.readable, {
       headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*',
       },
-      body: JSON.stringify(body),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      return NextResponse.json(
-        { error: `Anthropic API error ${response.status}: ${errorText}` },
-        { status: response.status }
-      );
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
-
-  } catch (error) {
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: err.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST',
+    },
+  });
 }
