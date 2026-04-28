@@ -234,8 +234,8 @@ Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Available foods (id:name:macros): ${foodList}
 Return ONLY raw JSON (no markdown fences). Totals are NOT required — omit all totals fields:
-{"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","multiplier":1.0,"reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above.`;
+{"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
+Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
 
       setLoadingProgress(70);
       setLoadingMsg('Step 2 of 3 — AI is building your plan...');
@@ -251,7 +251,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
       const calcTotals = (items) => items.reduce((acc, item) => {
         const food = allFoods.find(f => f.id === item.id);
         if (!food) return acc;
-        const m = item.multiplier || 1;
+        const m = 1; // always use raw DB macros — no multiplier scaling
         return {
           calories: acc.calories + food.calories * m,
           protein:  acc.protein  + food.protein  * m,
@@ -349,7 +349,7 @@ User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
-Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"reasoning":"brief reason max 15 words"}`;
+Return ONLY raw JSON: {"replacementId":"exact-id-from-list","reasoning":"brief reason max 15 words"}`;
 
       const swapData = await callAPI(prompt, 500);
 
@@ -364,14 +364,14 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
         if (idx >= 0) {
           mealItems[idx] = {
             id: swapData.replacementId,
-            multiplier: swapData.multiplier || 1,
+            // multiplier removed — always use raw DB macros
             reasoning: swapData.reasoning,
           };
           // Recalculate meal totals
           updated.days[dayIndex].meals[mealType].totals = mealItems.reduce((acc, item) => {
             const food = allFoods.find(f => f.id === item.id);
             if (!food) return acc;
-            const m = item.multiplier || 1;
+            const m = 1; // always use raw DB macros — no multiplier scaling
             return {
               calories: acc.calories + food.calories * m,
               protein:  acc.protein  + food.protein  * m,
@@ -848,7 +848,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
           meal.items.forEach((item, i) => {
             const food = allFoods.find(f => f.id === item.id);
             if (!food) return;
-            const m = item.multiplier || 1;
+            const m = 1; // always use raw DB macros — no multiplier scaling
             rows.push([
               i === 0 ? mealLabels[mealType] : '',
               food.name,
@@ -1067,7 +1067,7 @@ Return ONLY raw JSON: {"replacementId":"exact-id-from-list","multiplier":1.0,"re
                         </div>
                       </div>
                     );
-                    const m = item.multiplier || 1;
+                    const m = 1; // always use raw DB macros — no multiplier scaling
                     const isSwapping = swapping?.dayIndex === selectedDay && swapping?.mealType === mealType && swapping?.itemId === item.id;
                     return (
                       <div key={idx} className="food-row">
