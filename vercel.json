@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/warmup",
+      "schedule": "*/4 * * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/chat/route.js": {
+      "maxDuration": 120
+    },
+    "src/app/api/recipes/route.js": {
+      "maxDuration": 30
+    }
+  }
+}
