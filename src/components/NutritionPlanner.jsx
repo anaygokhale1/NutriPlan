@@ -269,7 +269,7 @@ const NutritionPlanner = () => {
 Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Available foods (id:name:macros): ${foodList}
-Return ONLY a raw JSON object. Do NOT use markdown code fences, do NOT write ```json, do NOT write ```. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
+Return ONLY a raw JSON object. Do NOT wrap in markdown. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
 {"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
 Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
 
@@ -400,7 +400,7 @@ User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
-Return ONLY a raw JSON object with no markdown fences. Start with { and end with }: {"replacementId":"exact-id-from-list","reasoning":"brief reason max 15 words"}`;
+Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"exact-id-from-list","reasoning":"brief reason max 15 words"}`;
 
       const swapData = await callAPI(prompt, 500);
 
