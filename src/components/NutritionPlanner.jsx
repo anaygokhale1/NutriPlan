@@ -164,9 +164,7 @@ const NutritionPlanner = () => {
     }
 
     // Once all tokens have arrived, extract and parse the JSON.
-    // Strategy: find the first { and the last } in the entire response.
-    // This is immune to markdown fences, leading text, trailing text,
-    // or any other wrapper the AI puts around the JSON.
+    // Step 1: extract the raw JSON object between first { and last }
     const firstBrace = accumulated.indexOf('{');
     const lastBrace  = accumulated.lastIndexOf('}');
 
@@ -174,8 +172,33 @@ const NutritionPlanner = () => {
       throw new Error('No JSON object found in response. Got: ' + accumulated.slice(0, 300));
     }
 
-    const jsonStr = accumulated.slice(firstBrace, lastBrace + 1);
-    return JSON.parse(jsonStr);
+    let jsonStr = accumulated.slice(firstBrace, lastBrace + 1);
+
+    // Step 2: try parsing as-is first
+    // Try parsing directly first
+    try {
+      return JSON.parse(jsonStr);
+    } catch (firstErr) {
+      // Sanitise and retry — AI sometimes adds apostrophes, curly quotes,
+      // trailing commas or control characters that break JSON
+      try {
+        let s = jsonStr;
+        // Replace Unicode curly single quotes with plain apostrophe
+        s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");
+        // Replace Unicode curly double quotes with straight quotes
+        s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');
+        // Remove literal tab and newline characters inside strings
+        s = s.replace(/\t/g, ' ').replace(/\r/g, '');
+        // Fix trailing commas before closing brace or bracket
+        s = s.replace(/,\s*\}/g, '}').replace(/,\s*\]/g, ']');
+        return JSON.parse(s);
+      } catch (secondErr) {
+        throw new Error(
+          'JSON parse failed: ' + secondErr.message +
+          ' | Preview: ' + jsonStr.slice(0, 200)
+        );
+      }
+    }
   };
 
   // ── Fetches real recipes from Supabase via /api/recipes ──
@@ -271,7 +294,7 @@ Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${
 Available foods (id:name:macros): ${foodList}
 Return ONLY a raw JSON object. Do NOT wrap in markdown. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
 {"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
+Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words with NO apostrophes or special characters. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
 
       setLoadingProgress(70);
       setLoadingMsg('Step 2 of 3 — AI is building your plan...');
