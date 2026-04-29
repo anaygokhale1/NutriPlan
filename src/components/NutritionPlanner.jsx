@@ -118,8 +118,10 @@ const NutritionPlanner = () => {
     };
   };
 
-  // ── Calls /api/chat (Next.js route that holds the Anthropic API key) ──
-  const callAPI = async (prompt, maxTokens) => {
+  // ── Calls /api/chat with STREAMING — tokens arrive in real time ──────────
+  // Old approach: waited for ALL tokens then parsed JSON in one shot → 60-90s blank screen
+  // New approach: reads tokens as they arrive → first tokens appear within 2-3 seconds
+  const callAPI = async (prompt, maxTokens, onChunk) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -133,13 +135,47 @@ const NutritionPlanner = () => {
       const errText = await response.text();
       throw new Error(`API ${response.status}: ${errText}`);
     }
-    const data = await response.json();
-    if (data.error) throw new Error(data.error);
-    const text = data.content?.find(c => c.type === 'text')?.text || '';
-    const clean = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON found in response. Got: ' + text.slice(0, 200));
-    return JSON.parse(match[0]);
+
+    // Read the response body as a stream of text chunks.
+    // response.body is a ReadableStream — we get a reader to pull from it.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = '';
+
+    while (true) {
+      // .read() returns the next available chunk — it resolves as soon as
+      // ANY data arrives, rather than waiting for everything.
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Decode the raw bytes to a string and add to our accumulation buffer.
+      const chunk = decoder.decode(value, { stream: true });
+
+      // Check if the server sent an error signal mid-stream.
+      if (chunk.includes('__STREAM_ERROR__:')) {
+        throw new Error(chunk.split('__STREAM_ERROR__:')[1]);
+      }
+
+      accumulated += chunk;
+
+      // Optional callback — lets the UI update a live character counter
+      // or show "Generating Day 1... Day 2..." as JSON days complete.
+      if (onChunk) onChunk(accumulated);
+    }
+
+    // Once all tokens have arrived, extract and parse the JSON.
+    // Strategy: find the first { and the last } in the entire response.
+    // This is immune to markdown fences, leading text, trailing text,
+    // or any other wrapper the AI puts around the JSON.
+    const firstBrace = accumulated.indexOf('{');
+    const lastBrace  = accumulated.lastIndexOf('}');
+
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      throw new Error('No JSON object found in response. Got: ' + accumulated.slice(0, 300));
+    }
+
+    const jsonStr = accumulated.slice(firstBrace, lastBrace + 1);
+    return JSON.parse(jsonStr);
   };
 
   // ── Fetches real recipes from Supabase via /api/recipes ──
@@ -233,13 +269,28 @@ const NutritionPlanner = () => {
 Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Available foods (id:name:macros): ${foodList}
-Return ONLY raw JSON (no markdown fences). Totals are NOT required — omit all totals fields:
+Return ONLY a raw JSON object. Do NOT use markdown code fences, do NOT write ```json, do NOT write ```. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
 {"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
 Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
 
       setLoadingProgress(70);
       setLoadingMsg('Step 2 of 3 — AI is building your plan...');
-      const planData = await callAPI(planPrompt, 5500); // items-only JSON needs ~4100 tokens + 1400 buffer
+      // Pass onChunk callback so the UI shows live token progress.
+      // The user now sees "Generating... 1,240 chars received" growing in real time
+      // instead of a frozen screen for 60+ seconds.
+      let streamedChars = 0;
+      const planData = await callAPI(planPrompt, 5500, (accumulated) => {
+        streamedChars = accumulated.length;
+        const days = (accumulated.match(/"dayName"/g) || []).length;
+        if (days > 0) {
+          setLoadingMsg(`Step 2 of 3 — Building your plan... (Day ${days} of 7 complete)`);
+        } else {
+          setLoadingMsg(`Step 2 of 3 — AI is writing your plan... (${streamedChars} chars)`);
+        }
+        // Move progress bar forward as stream arrives: 30% → 88% proportionally
+        const streamProgress = Math.min(88, 30 + Math.round((streamedChars / 18000) * 58));
+        setLoadingProgress(streamProgress);
+      });
       setLoadingProgress(90);
       setLoadingMsg('Step 3 of 3 — Calculating your macros...');
 
@@ -349,7 +400,7 @@ User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
-Return ONLY raw JSON: {"replacementId":"exact-id-from-list","reasoning":"brief reason max 15 words"}`;
+Return ONLY a raw JSON object with no markdown fences. Start with { and end with }: {"replacementId":"exact-id-from-list","reasoning":"brief reason max 15 words"}`;
 
       const swapData = await callAPI(prompt, 500);
 
