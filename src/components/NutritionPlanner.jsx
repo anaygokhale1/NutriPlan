@@ -216,28 +216,38 @@ const NutritionPlanner = () => {
 
     // Step 2: try parsing as-is first
     // Try parsing directly first
+    // ── 3-stage JSON parser ────────────────────────────────────────────────
+    // Stage 1: try raw parse — works the majority of the time
+    try { return JSON.parse(jsonStr); } catch (e1) {}
+
+    // Stage 2: targeted sanitisation for the most common AI mistakes
     try {
-      return JSON.parse(jsonStr);
-    } catch (firstErr) {
-      // Sanitise and retry — AI sometimes adds apostrophes, curly quotes,
-      // trailing commas or control characters that break JSON
-      try {
-        let s = jsonStr;
-        // Replace Unicode curly single quotes with plain apostrophe
-        s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");
-        // Replace Unicode curly double quotes with straight quotes
-        s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');
-        // Remove literal tab and newline characters inside strings
-        s = s.replace(/\t/g, ' ').replace(/\r/g, '');
-        // Fix trailing commas before closing brace or bracket
-        s = s.replace(/,\s*\}/g, '}').replace(/,\s*\]/g, ']');
-        return JSON.parse(s);
-      } catch (secondErr) {
-        throw new Error(
-          'JSON parse failed: ' + secondErr.message +
-          ' | Preview: ' + jsonStr.slice(0, 200)
-        );
-      }
+      let s = jsonStr;
+      s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");   // curly single quotes
+      s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');   // curly double quotes
+      s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');     // trailing commas
+      // Strip ALL control characters (ASCII 0-31) that appear inside JSON strings.
+      // These include \n \r \t and any other invisible byte the AI emits.
+      // We do this ONLY inside quoted string values — matching "..." blocks —
+      // so we don't corrupt the structural characters like { } [ ].
+      s = s.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
+        // Inside each quoted value, replace any raw control char with a space
+        return match.replace(/[\x00-\x1F]/g, ' ');
+      });
+      return JSON.parse(s);
+    } catch (e2) {}
+
+    // Stage 3: nuclear option — strip ALL control chars from the entire string,
+    // then retry. This is safe because JSON structural chars ({ } [ ] : , ")
+    // are all above ASCII 31.
+    try {
+      const clean = jsonStr.replace(/[\x00-\x1F]/g, ' ');
+      return JSON.parse(clean);
+    } catch (e3) {
+      throw new Error(
+        'JSON parse failed after all sanitisation attempts: ' + e3.message +
+        ' | Preview: ' + jsonStr.slice(0, 200)
+      );
     }
   };
 
@@ -365,7 +375,7 @@ INSTRUCTIONS:
 - If one item is not enough calories, ADD more items from the list until you reach the target.
 - Vary meals across days — do not repeat the same id on consecutive days.
 - Use ONLY exact id values from the list. Do NOT invent ids.
-- reasoning: max 6 words, NO apostrophes or special characters.
+- reasoning: max 6 plain words on a SINGLE LINE, NO apostrophes, quotes, newlines or special characters.
 - Do NOT include a multiplier field.
 
 Return ONLY a raw JSON object. Start with { end with }. No markdown:
