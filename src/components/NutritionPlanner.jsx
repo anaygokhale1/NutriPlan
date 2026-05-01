@@ -7,6 +7,7 @@ const NutritionPlanner = () => {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [errorModal, setErrorModal] = useState(null); // { message, detail }
   const [userData, setUserData] = useState({
     goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
@@ -226,12 +227,11 @@ const NutritionPlanner = () => {
       s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");   // curly single quotes
       s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');   // curly double quotes
       s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');     // trailing commas
-      // Strip ALL control characters (ASCII 0-31) that appear inside JSON strings.
-      // These include \n \r \t and any other invisible byte the AI emits.
-      // We do this ONLY inside quoted string values — matching "..." blocks —
-      // so we don't corrupt the structural characters like { } [ ].
+      // Fix unquoted property keys: {dayNumber: 1} → {"dayNumber": 1}
+      // Matches word chars at start of object property that are not already quoted
+      s = s.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+      // Strip ALL control characters (ASCII 0-31) inside quoted string values
       s = s.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
-        // Inside each quoted value, replace any raw control char with a space
         return match.replace(/[\x00-\x1F]/g, ' ');
       });
       return JSON.parse(s);
@@ -387,7 +387,7 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
       // The user now sees "Generating... 1,240 chars received" growing in real time
       // instead of a frozen screen for 60+ seconds.
       let streamedChars = 0;
-      const planData = await callAPI(planPrompt, 6500, (accumulated) => {
+      const planData = await callAPI(planPrompt, 7000, (accumulated) => {
         streamedChars = accumulated.length;
         const days = (accumulated.match(/"dayName"/g) || []).length;
         if (days > 0) {
@@ -505,7 +505,7 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
 
     } catch (error) {
       console.error('Error:', error);
-      alert('Error: ' + error.message);
+      setErrorModal({ message: 'Plan generation failed', detail: error.message });
     } finally {
       setLoading(false);
       setLoadingMsg('');
@@ -617,7 +617,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
       });
 
     } catch (error) {
-      alert('Swap failed: ' + error.message);
+      setErrorModal({ message: 'Swap failed', detail: error.message });
     } finally {
       setSwapping(null);
     }
@@ -2049,6 +2049,9 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         /* ══════════════════════════════════════════
            RECIPE MODAL
         ══════════════════════════════════════════ */
+        .error-modal .modal-head h3 { font-size: 1.2rem; color: #be123c; }
+        .error-detail-box { background: #1e1e1e; border-radius: var(--radius-sm); padding: 1rem; overflow-x: auto; max-height: 200px; overflow-y: auto; }
+        .error-detail-box code { font-family: 'Courier New', monospace; font-size: 0.78rem; color: #86efac; white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(15,31,23,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; backdrop-filter: blur(4px); }
         .modal-box { background: white; border-radius: var(--radius-lg); width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg); animation: popIn 0.22s cubic-bezier(0.34,1.56,0.64,1); }
         @keyframes popIn { from { opacity: 0; transform: scale(0.93) translateY(-10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
@@ -2131,6 +2134,50 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           .header-pills { display: none; }
         }
       `}</style>
+      {/* ── Error Modal ─────────────────────────────────────────────── */}
+      {errorModal && (
+        <div className="modal-overlay" onClick={() => setErrorModal(null)}>
+          <div className="modal-box error-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>⚠️ {errorModal.message}</h3>
+              <button className="modal-close" onClick={() => setErrorModal(null)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{fontSize:'0.88rem',color:'var(--text-mid)',marginBottom:'1rem',lineHeight:1.6}}>
+                Something went wrong generating your plan. You can copy the error details below and try again.
+              </p>
+              <div className="error-detail-box">
+                <code>{errorModal.detail}</code>
+              </div>
+              <div style={{display:'flex',gap:'0.75rem',marginTop:'1.25rem',justifyContent:'flex-end'}}>
+                <button
+                  className="export-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText(errorModal.detail)
+                      .then(() => alert('Copied to clipboard!'))
+                      .catch(() => {
+                        // fallback for browsers that block clipboard
+                        const ta = document.createElement('textarea');
+                        ta.value = errorModal.detail;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                      });
+                  }}
+                >
+                  📋 Copy Error
+                </button>
+                <button className="next-btn" onClick={() => setErrorModal(null)}>
+                  Try Again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
