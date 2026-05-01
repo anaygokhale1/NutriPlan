@@ -328,13 +328,48 @@ const NutritionPlanner = () => {
         ? `STRICTLY exclude recipes containing: ${userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ')}.`
         : '';
 
-      const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
-Goals: ${userData.goals.join(', ')}${userData.targetWeight ? '. Target weight: ' + userData.targetWeight + userData.weightUnit + ' (current: ' + userData.weight + userData.weightUnit + ')' : ''}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
+      // Per-meal calorie targets — split daily total across 4 meals
+      // Breakfast 25%, Lunch 30%, Snack 15%, Dinner 30%
+      const mealTargets = {
+        breakfast: Math.round(calories * 0.25),
+        lunch:     Math.round(calories * 0.30),
+        snack:     Math.round(calories * 0.15),
+        dinner:    Math.round(calories * 0.30),
+      };
+      // Items needed per meal — scale with calorie target
+      // Higher calorie targets need more items to reach the number
+      const itemsPerMeal = calories >= 2500 ? '3-4' : calories >= 2000 ? '2-3' : '2';
+
+      const planPrompt = `You are a certified nutritionist building a PRECISE 7-day meal plan.
+CRITICAL: You MUST hit these DAILY targets within 10%:
+  Calories: ${calories} kcal (min ${Math.round(calories*0.90)}, max ${Math.round(calories*1.10)})
+  Protein:  ${protein}g    (min ${Math.round(protein*0.90)}g,  max ${Math.round(protein*1.10)}g)
+  Carbs:    ${carbs}g      (min ${Math.round(carbs*0.90)}g,    max ${Math.round(carbs*1.10)}g)
+  Fat:      ${fat}g        (min ${Math.round(fat*0.90)}g,      max ${Math.round(fat*1.10)}g)
+
+PER-MEAL calorie targets (select items whose calories SUM to these):
+  Breakfast: ~${mealTargets.breakfast} kcal (${itemsPerMeal} items)
+  Lunch:     ~${mealTargets.lunch} kcal (${itemsPerMeal} items)
+  Snack:     ~${mealTargets.snack} kcal (1-2 items)
+  Dinner:    ~${mealTargets.dinner} kcal (${itemsPerMeal} items)
+
+Goals: ${userData.goals.join(', ')}${userData.targetWeight ? '. Target: ' + userData.targetWeight + userData.weightUnit : ''}.
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
-Available foods (id:name:macros): ${foodList}
-Return ONLY a raw JSON object. Do NOT wrap in markdown. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
-{"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id-from-list","reasoning":"8 words max"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}
-Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max 8 words with NO apostrophes or special characters. Use ONLY exact id values from the list above. Do NOT include a multiplier field — macros are already correct per portion.`;
+Activities: ${userData.activities.map(a => a.name + ' ' + a.frequency).join(', ')}.
+
+Available foods — each entry is id:name(calories,protein,carbs,fat):
+${foodList}
+
+INSTRUCTIONS:
+- For each meal, pick items whose COMBINED calories match the per-meal target above.
+- If one item is not enough calories, ADD more items from the list until you reach the target.
+- Vary meals across days — do not repeat the same id on consecutive days.
+- Use ONLY exact id values from the list. Do NOT invent ids.
+- reasoning: max 6 words, NO apostrophes or special characters.
+- Do NOT include a multiplier field.
+
+Return ONLY a raw JSON object. Start with { end with }. No markdown:
+{"days":[{"dayNumber":1,"dayName":"Monday","meals":{"breakfast":{"items":[{"id":"exact-id","reasoning":"reason here"}]},"lunch":{"items":[]},"snack":{"items":[]},"dinner":{"items":[]}}}]}`;
 
       setLoadingProgress(70);
       setLoadingMsg('Step 2 of 3 — AI is building your plan...');
@@ -342,7 +377,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
       // The user now sees "Generating... 1,240 chars received" growing in real time
       // instead of a frozen screen for 60+ seconds.
       let streamedChars = 0;
-      const planData = await callAPI(planPrompt, 5500, (accumulated) => {
+      const planData = await callAPI(planPrompt, 6500, (accumulated) => {
         streamedChars = accumulated.length;
         const days = (accumulated.match(/"dayName"/g) || []).length;
         if (days > 0) {
@@ -397,6 +432,60 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
         carbs:    acc.carbs    + d.dailyTotals.carbs,
         fat:      acc.fat      + d.dailyTotals.fat,
         fiber:    acc.fiber    + (d.dailyTotals.fiber || 0),
+      }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+
+      // ── POST-PROCESS: Auto-fill meals that are >10% off calorie target ──
+      // If the AI under-built a day, we add high-calorie items from the
+      // database to bring it within the 10% tolerance band.
+      const { calories: targetCal, protein: targetPro, carbs: targetCarbs, fat: targetFat } = calculateMacros();
+      const tolerance = 0.10;
+      const calFloor = Math.round(targetCal * (1 - tolerance));
+
+      verifiedPlan.days.forEach(day => {
+        // If day is more than 10% under target calories, add items to dinner
+        // (dinner is the most flexible meal to add items to)
+        let attempts = 0;
+        while (day.dailyTotals.calories < calFloor && attempts < 5) {
+          attempts++;
+          // Find a high-calorie protein or carb not already in today's plan
+          const usedIds = new Set(
+            Object.values(day.meals).flatMap(meal => meal.items.map(i => i.id))
+          );
+          const calGap = targetCal - day.dailyTotals.calories;
+
+          // Find the best-fitting food: highest calorie that doesn't overshoot
+          const candidates = allFoods
+            .filter(f => !usedIds.has(f.id))
+            .filter(f => f.calories <= calGap * 1.3) // allow slight overshoot
+            .sort((a, b) => Math.abs(a.calories - calGap * 0.5) - Math.abs(b.calories - calGap * 0.5));
+
+          if (candidates.length === 0) break;
+          const pick = candidates[0];
+
+          // Add to dinner
+          day.meals.dinner.items.push({ id: pick.id, reasoning: 'Added to meet calorie target' });
+
+          // Recalculate dinner totals
+          day.meals.dinner.totals = calcTotals(day.meals.dinner.items);
+
+          // Recalculate daily totals
+          day.dailyTotals = Object.values(day.meals).reduce((acc, meal) => ({
+            calories: acc.calories + meal.totals.calories,
+            protein:  acc.protein  + meal.totals.protein,
+            carbs:    acc.carbs    + meal.totals.carbs,
+            fat:      acc.fat      + meal.totals.fat,
+            fiber:    acc.fiber    + meal.totals.fiber,
+          }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+        }
+      });
+
+      // Recalculate weekly totals after post-processing
+      verifiedPlan.weeklyTotals = verifiedPlan.days.reduce((acc, d) => ({
+        calories: acc.calories + d.dailyTotals.calories,
+        protein:  acc.protein  + d.dailyTotals.protein,
+        carbs:    acc.carbs    + d.dailyTotals.carbs,
+        fat:      acc.fat      + d.dailyTotals.fat,
+        fiber:    acc.fiber    + d.dailyTotals.fiber,
       }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
 
       setLoadingProgress(100);
@@ -1006,7 +1095,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
 
       // ── Sheet 1: Weekly Overview ──
       const overviewRows = [
-        ['NutriPlan — 7-Day Meal Plan'],
+        ['VitalMenu — 7-Day Meal Plan'],
         ['Goals', userData.goals.join(', ')],
         ['Daily Calorie Target', calculateMacros().calories + ' kcal',
          'Daily Protein Target', calculateMacros().protein + 'g'],
@@ -1088,7 +1177,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         XLSX.utils.book_append_sheet(wb, ws, day.dayName.slice(0, 3));
       });
 
-      XLSX.writeFile(wb, 'NutriPlan_MealPlan.xlsx');
+      XLSX.writeFile(wb, 'VitalMenu_MealPlan.xlsx');
     };
 
     const exportShoppingList = async () => {
@@ -1097,7 +1186,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
       const wb = XLSX.utils.book_new();
 
       const rows = [
-        ['NutriPlan — Weekly Shopping List'],
+        ['VitalMenu — Weekly Shopping List'],
         ['Generated for your 7-day meal plan', '', '', userData.goals.join(' + ') + ' goal'],
         [],
         ['✓', 'Ingredient', 'Category', 'Used In Recipes'],
@@ -1125,7 +1214,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
       const ws = XLSX.utils.aoa_to_sheet(rows);
       ws['!cols'] = [4, 28, 22, 50].map(w => ({ wch: w }));
       XLSX.utils.book_append_sheet(wb, ws, 'Shopping List');
-      XLSX.writeFile(wb, 'NutriPlan_ShoppingList.xlsx');
+      XLSX.writeFile(wb, 'VitalMenu_ShoppingList.xlsx');
     };
 
     const ShoppingListView = () => {
@@ -1379,8 +1468,8 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
               <path d="M29 17 Q34 12 36 15 Q33 20 29 17Z" fill="#a8e6a3" opacity="0.9"/>
             </svg>
             <div className="logo-text">
-              <span className="logo-name">NutriPlan</span>
-              <span className="logo-sub">AI-Powered Meal Planning</span>
+              <span className="logo-name">VitalMenu</span>
+              <span className="logo-sub">AI-Powered Nutrition Planning</span>
             </div>
           </div>
           <p className="tagline">Your Personalized Nutrition Guide</p>
