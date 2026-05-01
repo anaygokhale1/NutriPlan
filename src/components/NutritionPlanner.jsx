@@ -10,7 +10,7 @@ const NutritionPlanner = () => {
   const [userData, setUserData] = useState({
     goals: [], weight: '', height: '', age: '', sex: '',
     weightUnit: 'kg', heightUnit: 'cm',
-    activities: [], customActivities: '',
+    activities: [],
     preferences: [], restrictions: [], meatOptions: [], foodAllergies: [],
   });
   const [foodDatabase, setFoodDatabase] = useState(null);
@@ -19,7 +19,24 @@ const NutritionPlanner = () => {
   const [swapping, setSwapping] = useState(null);
 
   const goals = ['Weight Loss', 'Muscle Gain', 'Weight Gain', 'Maintenance', 'Athletic Performance'];
-  const activityOptions = ['Gym (3-5x/week)', 'Running/Cardio', 'Sports (Team/Individual)', 'Walking/Light Activity', 'Sedentary'];
+  const activityList = [
+    { name: 'Gym / Weight Training',  baseMult: 1.55, emoji: '🏋️' },
+    { name: 'Running',                baseMult: 1.60, emoji: '🏃' },
+    { name: 'Cycling / Spinning',     baseMult: 1.55, emoji: '🚴' },
+    { name: 'Swimming',               baseMult: 1.55, emoji: '🏊' },
+    { name: 'Team Sports',            baseMult: 1.65, emoji: '⚽' },
+    { name: 'Yoga / Pilates',         baseMult: 1.40, emoji: '🧘' },
+    { name: 'Walking',                baseMult: 1.375, emoji: '🚶' },
+    { name: 'HIIT / CrossFit',        baseMult: 1.65, emoji: '💥' },
+    { name: 'Martial Arts',           baseMult: 1.60, emoji: '🥊' },
+    { name: 'Dancing',                baseMult: 1.50, emoji: '💃' },
+    { name: 'Rock Climbing',          baseMult: 1.55, emoji: '🧗' },
+    { name: 'Hiking',                 baseMult: 1.45, emoji: '🥾' },
+    { name: 'Rowing',                 baseMult: 1.60, emoji: '🚣' },
+    { name: 'Sedentary (Desk Job)',   baseMult: 1.20, emoji: '💼' },
+  ];
+  const frequencyOptions = ['1x / week', '2x / week', '3x / week', '4x / week', '5x / week', '6x / week', 'Daily'];
+  const freqToDays = { '1x / week': 1, '2x / week': 2, '3x / week': 3, '4x / week': 4, '5x / week': 5, '6x / week': 6, 'Daily': 7 };
   const cuisinePreferences = ['American', 'Italian', 'Asian', 'Mexican', 'Indian', 'Mediterranean', 'Greek', 'Middle Eastern', 'Thai', 'Japanese', 'Chinese'];
   const dietaryRestrictions = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Halal', 'Kosher', 'Keto', 'Paleo', 'No Restrictions'];
   const meatOptionsList = ['All Meats', 'Chicken & Poultry', 'Seafood & Fish', 'Red Meat (Beef/Lamb)', 'Pork', 'Game Meat', 'Processed Meats'];
@@ -60,22 +77,45 @@ const NutritionPlanner = () => {
       ? (10 * weightKg) + (6.25 * heightCm) - (5 * age) + 5
       : (10 * weightKg) + (6.25 * heightCm) - (5 * age) - 161;
 
-    // FIX 4: Score EVERY activity independently and take the highest multiplier
-    const activityText = [
-      ...userData.activities,
-      ...(userData.customActivities ? [userData.customActivities] : [])
-    ].join(' ').toLowerCase();
-    const activityScores = [
-      { keywords: ['sport','team'],                                    mult: 1.65 },
-      { keywords: ['run','cardio'],                                    mult: 1.60 },
-      { keywords: ['gym','weight','lift'],                             mult: 1.55 },
-      { keywords: ['swim','yoga','bike','cycl','pilates','martial'],   mult: 1.50 },
-      { keywords: ['walk','light','hike'],                             mult: 1.375 },
-      { keywords: ['sedentary','desk','inactive'],                     mult: 1.20 },
-    ];
-    const mult = activityScores.reduce((best, { keywords, mult: m }) => {
-      return keywords.some(kw => activityText.includes(kw)) ? Math.max(best, m) : best;
-    }, 1.2);
+    // ── Frequency-weighted ACSM multiplier ────────────────────────────────
+    // Each activity contributes based on actual days/week.
+    // Formula: weighted average across all 7 days.
+    // Rest days default to sedentary baseline (1.2).
+    let mult = 1.2;
+    if (userData.activities && userData.activities.length > 0) {
+      let weightedSum = 0;
+      let totalActiveDays = 0;
+      userData.activities.forEach(act => {
+        // Find the baseMult for this activity from activityList
+        const activityDefs = [
+          { name: 'Gym / Weight Training',  baseMult: 1.55 },
+          { name: 'Running',                baseMult: 1.60 },
+          { name: 'Cycling / Spinning',     baseMult: 1.55 },
+          { name: 'Swimming',               baseMult: 1.55 },
+          { name: 'Team Sports',            baseMult: 1.65 },
+          { name: 'Yoga / Pilates',         baseMult: 1.40 },
+          { name: 'Walking',                baseMult: 1.375 },
+          { name: 'HIIT / CrossFit',        baseMult: 1.65 },
+          { name: 'Martial Arts',           baseMult: 1.60 },
+          { name: 'Dancing',               baseMult: 1.50 },
+          { name: 'Rock Climbing',          baseMult: 1.55 },
+          { name: 'Hiking',                 baseMult: 1.45 },
+          { name: 'Rowing',                 baseMult: 1.60 },
+          { name: 'Sedentary (Desk Job)',   baseMult: 1.20 },
+        ];
+        const def = activityDefs.find(a => a.name === act.name);
+        const baseMult = def ? def.baseMult : 1.375;
+        const days = act.daysPerWeek || 3;
+        weightedSum += baseMult * days;
+        totalActiveDays += days;
+      });
+      // Blend active days with sedentary rest days across the full week
+      const cappedDays = Math.min(totalActiveDays, 7);
+      const activePortion    = weightedSum / 7;
+      const sedentaryPortion = 1.2 * (7 - cappedDays) / 7;
+      mult = activePortion + sedentaryPortion;
+      mult = Math.min(1.9, Math.max(1.2, mult));
+    }
 
     const hasGoal = (g) => userData.goals.includes(g);
     let calories = bmr * mult;
@@ -289,7 +329,7 @@ const NutritionPlanner = () => {
         : '';
 
       const planPrompt = `You are a nutritionist. Create a 7-day meal plan.
-Goals: ${userData.goals.join(', ')}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
+Goals: ${userData.goals.join(', ')}${userData.targetWeight ? '. Target weight: ' + userData.targetWeight + userData.weightUnit + ' (current: ' + userData.weight + userData.weightUnit + ')' : ''}. Daily targets: ${calories}kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat.
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Available foods (id:name:macros): ${foodList}
 Return ONLY a raw JSON object. Do NOT wrap in markdown. Start your response with { and end with }. Totals are NOT required — omit all totals fields:
@@ -419,7 +459,7 @@ Rules: 7 days Monday-Sunday, vary meals daily, 2-3 items per meal, reasoning max
 
       const prompt = `You are a nutritionist. Swap a ${currentCategory} item for ${mealLabels[mealType]}.
 Current item: ${currentFood.name} (${currentFood.calories}cal, P${currentFood.protein}g, C${currentFood.carbs}g, F${currentFood.fat}g).
-User goals: ${userData.goals.join(', ')}. Restrictions: ${userData.restrictions.join(', ')}. ${userData.meatOptions.length > 0 ? 'Allowed meats: ' + userData.meatOptions.join(', ') + '.' : ''} ${userData.foodAllergies.filter(a => a !== 'No Allergies').length > 0 ? 'Exclude allergens: ' + userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ') + '.' : ''}
+User goals: ${userData.goals.join(', ')}. Activities: ${userData.activities.map(a => a.name + ' ' + a.frequency).join(', ')}. Restrictions: ${userData.restrictions.join(', ')}. ${userData.meatOptions.length > 0 ? 'Allowed meats: ' + userData.meatOptions.join(', ') + '.' : ''} ${userData.foodAllergies.filter(a => a !== 'No Allergies').length > 0 ? 'Exclude allergens: ' + userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ') + '.' : ''}
 Pick the BEST alternative from this same-category (${currentCategory}) list:
 ${foodList}
 Choose the closest macros to the current item, best suited for ${mealLabels[mealType]}.
@@ -591,17 +631,88 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           </select>
         </div>
       </div>
-      <div className="input-group">
-        <label><Activity size={16} /> Activity Level</label>
-        <div className="button-grid">
-          {activityOptions.map(activity => (
-            <button key={activity} className={`option-btn ${userData.activities.includes(activity) ? 'active' : ''}`} onClick={() => toggleArrayField('activities', activity)}>{activity}</button>
-          ))}
+      {/* Target Weight — shown only for weight-related goals */}
+      {(userData.goals.includes('Weight Loss') || userData.goals.includes('Weight Gain') || userData.goals.includes('Muscle Gain')) && (
+        <div className="input-group target-weight-group">
+          <label>
+            🎯 Target Weight ({userData.weightUnit})
+            <span className="label-hint">
+              {userData.goals.includes('Weight Loss') ? ' your goal weight to lose down to' :
+               userData.goals.includes('Muscle Gain') ? ' your target body weight' :
+               ' your goal weight to gain up to'}
+            </span>
+          </label>
+          <input
+            type="number" min="1"
+            value={userData.targetWeight}
+            onChange={(e) => updateUserData('targetWeight', e.target.value)}
+            placeholder={userData.weight ? 'Currently ' + userData.weight + ' ' + userData.weightUnit : 'Enter target weight'}
+          />
+          {userData.weight && userData.targetWeight && (() => {
+            const curr = parseFloat(userData.weight);
+            const tgt  = parseFloat(userData.targetWeight);
+            const diff = tgt - curr;
+            if (isNaN(diff) || diff === 0) return null;
+            const isLoss = diff < 0;
+            return (
+              <p className={'target-weight-hint ' + (isLoss ? 'loss' : 'gain')}>
+                {isLoss ? '📉 Lose ' : '📈 Gain '}{Math.abs(diff).toFixed(1)} {userData.weightUnit} from your current weight
+              </p>
+            );
+          })()}
         </div>
-      </div>
+      )}
+
       <div className="input-group">
-        <label><Plus size={16} /> Custom Activities (Optional)</label>
-        <input type="text" value={userData.customActivities} onChange={(e) => updateUserData('customActivities', e.target.value)} placeholder="E.g., Swimming 3x/week, Yoga daily" />
+        <label><Activity size={16} /> Activities <span className="label-hint">(select all and set weekly frequency)</span></label>
+        <div className="activity-grid">
+          {activityList.map(act => {
+            const selected = userData.activities.find(a => a.name === act.name);
+            return (
+              <div
+                key={act.name}
+                className={'activity-card' + (selected ? ' selected' : '')}
+                onClick={() => {
+                  if (selected) {
+                    updateUserData('activities', userData.activities.filter(a => a.name !== act.name));
+                  } else {
+                    updateUserData('activities', [...userData.activities, { name: act.name, frequency: '3x / week', daysPerWeek: 3 }]);
+                  }
+                }}
+              >
+                <div className="activity-card-top">
+                  <span className="activity-emoji">{act.emoji}</span>
+                  <span className="activity-name">{act.name}</span>
+                </div>
+                {selected && (
+                  <select
+                    className="frequency-select"
+                    value={selected.frequency}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => {
+                      e.stopPropagation();
+                      const freq = e.target.value;
+                      const days = freqToDays[freq] || 3;
+                      updateUserData('activities', userData.activities.map(a =>
+                        a.name === act.name ? { ...a, frequency: freq, daysPerWeek: days } : a
+                      ));
+                    }}
+                  >
+                    {frequencyOptions.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {userData.activities.length > 0 && (
+          <div className="activity-summary">
+            {userData.activities.map(a => {
+              const def = activityList.find(d => d.name === a.name);
+              return <span key={a.name} className="activity-tag">{def ? def.emoji : '🏃'} {a.name} · {a.frequency}</span>;
+            })}
+          </div>
+        )}
       </div>
       <div className="btn-right">
         <button className="next-btn" onClick={() => setStep(2)} disabled={
@@ -718,7 +829,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
 
   const renderStep3 = () => {
     const macros = calculateMacros();
-    const allActivities = [...userData.activities, ...(userData.customActivities.trim() ? [userData.customActivities] : [])];
+
     return (
       <div className="form-section">
         <h2>Review Your Profile</h2>
@@ -751,8 +862,13 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
             </div>
           </div>
           <div className="review-section">
-            <div className="review-label">Activity</div>
-            <div className="tag-list">{allActivities.map(act => <span key={act} className="tag">{act}</span>)}</div>
+            <div className="review-label">Activities</div>
+            <div className="tag-list">
+              {userData.activities.map(a => {
+                const def = activityList.find(d => d.name === a.name);
+                return <span key={a.name} className="tag">{def ? def.emoji : ''} {a.name} · {a.frequency}</span>;
+              })}
+            </div>
           </div>
           <div className="review-section">
             <div className="review-label">Cuisines</div>
@@ -788,6 +904,16 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
               </div>
             ))}
           </div>
+          {macros.weeksToGoal && (
+            <div className="weeks-to-goal">
+              <span>⏱</span>
+              <div>
+                <strong>Estimated time to reach {userData.targetWeight} {userData.weightUnit}:</strong>
+                <span> approximately {macros.weeksToGoal} weeks </span>
+                <span className="weeks-hint">following this plan consistently</span>
+              </div>
+            </div>
+          )}
           {macros.macroConflict && (
             <div className="macro-warning">
               ⚠️ Your combined goals created a macro conflict — fat has been adjusted to ensure a minimum of 50g carbs. Consider selecting fewer conflicting goals.
@@ -1065,18 +1191,27 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           <h2>Your 7-Day Meal Plan</h2>
           <p className="subtitle">Select a day below to view its meals</p>
           <div className="summary-strip">
-            {[
-              ['Avg Calories', Math.round(weeklyPlan.weeklyTotals.calories / 7), ''],
-              ['Avg Protein',  Math.round(weeklyPlan.weeklyTotals.protein / 7), 'g'],
-              ['Avg Carbs',    Math.round(weeklyPlan.weeklyTotals.carbs / 7), 'g'],
-              ['Avg Fat',      Math.round(weeklyPlan.weeklyTotals.fat / 7), 'g'],
-              ['Avg Fiber',    Math.round((weeklyPlan.weeklyTotals.fiber || 0) / 7), 'g'],
-            ].map(([label, val, unit]) => (
-              <div key={label} className="summary-pill">
-                <span className="summary-val">{val}{unit}</span>
-                <span className="summary-lbl">{label}</span>
-              </div>
-            ))}
+            {(() => {
+              const tgt = calculateMacros();
+              const pctOff = (a, t) => t ? Math.abs(Math.round((a - t) / t * 100)) : 0;
+              return [
+                { label: 'Calories', actual: Math.round(weeklyPlan.weeklyTotals.calories / 7), target: tgt.calories, unit: '' },
+                { label: 'Protein',  actual: Math.round(weeklyPlan.weeklyTotals.protein  / 7), target: tgt.protein,  unit: 'g' },
+                { label: 'Carbs',    actual: Math.round(weeklyPlan.weeklyTotals.carbs    / 7), target: tgt.carbs,    unit: 'g' },
+                { label: 'Fat',      actual: Math.round(weeklyPlan.weeklyTotals.fat      / 7), target: tgt.fat,      unit: 'g' },
+                { label: 'Fiber',    actual: Math.round((weeklyPlan.weeklyTotals.fiber||0)/7), target: null,         unit: 'g' },
+              ].map(({ label, actual, target, unit }) => (
+                <div key={label} className="summary-pill">
+                  <span className="summary-val">{actual}{unit}</span>
+                  <span className="summary-lbl">{label}</span>
+                  {target !== null && (
+                    <span className={`summary-target ${pctOff(actual,target) <= 10 ? 'on-track' : 'off-track'}`}>
+                      goal {target}{unit}
+                    </span>
+                  )}
+                </div>
+              ));
+            })()}
           </div>
         </div>
 
@@ -1198,6 +1333,10 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
             <button className="modal-close" onClick={() => setSelectedRecipe(null)}><X size={20} /></button>
           </div>
           <div className="modal-body">
+            <div className="serving-banner">
+              <span>🍽</span>
+              <span>All ingredients below are for a <strong>{selectedRecipe.portion_size}</strong> serving. Scale quantities proportionally for different portion sizes.</span>
+            </div>
             <div className="modal-meta-grid">
               <div><strong>Cuisine</strong><br />{selectedRecipe.cuisine}</div>
               <div><strong>Cook Time</strong><br />{selectedRecipe.cooking_time}</div>
@@ -1609,6 +1748,12 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         .summary-pill:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
         .summary-val { font-size: 1.15rem; font-weight: 800; color: var(--green-mid); font-family: 'Playfair Display', serif; }
         .summary-lbl { font-size: 0.68rem; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px; font-weight: 700; }
+        .summary-target { font-size: 0.62rem; font-weight: 700; margin-top: 4px; padding: 2px 7px; border-radius: 99px; }
+        .summary-target.on-track  { background: #dcfce7; color: #166534; }
+        .summary-target.off-track { background: #fef9c3; color: #854d0e; }
+        .serving-banner { display: flex; align-items: flex-start; gap: 0.6rem; background: linear-gradient(135deg,#f0fdf4,#dcfce7); border: 1.5px solid #86efac; border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: #166534; font-weight: 500; line-height: 1.5; }
+        .serving-banner span:first-child { font-size: 1.1rem; flex-shrink: 0; }
+        .serving-banner strong { font-weight: 800; }
 
         /* Day tabs */
         .day-tabs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.4rem; margin: 1.25rem 0; }
@@ -1832,7 +1977,27 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         ══════════════════════════════════════════ */
         /* ── Meat Options & Allergies ── */
         .label-hint { font-size: 0.72rem; color: var(--text-soft); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+        .target-weight-group { background: linear-gradient(135deg,#f0fdf4,#dcfce7); border-radius: var(--radius-sm); padding: 1rem; border: 1.5px solid #86efac; }
+        .target-weight-hint { font-size: 0.82rem; font-weight: 700; margin-top: 0.5rem; padding: 0.4rem 0.75rem; border-radius: var(--radius-sm); display: inline-block; }
+        .target-weight-hint.loss { background: #fff1f2; color: #be123c; border: 1px solid #fca5a5; }
+        .target-weight-hint.gain { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+        .weeks-to-goal { display: flex; align-items: center; gap: 0.75rem; background: linear-gradient(135deg,#eff6ff,#dbeafe); border: 1.5px solid #93c5fd; border-radius: var(--radius-sm); padding: 0.875rem 1rem; margin-top: 1rem; font-size: 0.88rem; color: #1e40af; line-height: 1.5; }
+        .weeks-to-goal > span:first-child { font-size: 1.2rem; flex-shrink: 0; }
+        .weeks-to-goal strong { font-weight: 800; }
+        .weeks-hint { font-size: 0.78rem; opacity: 0.7; font-style: italic; margin-left: 4px; }
         .section-hint { font-size: 0.78rem; color: var(--text-soft); margin-top: 0.5rem; font-style: italic; font-weight: 500; }
+        .activity-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-bottom: 0.75rem; }
+        .activity-card { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.75rem 0.875rem; border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: var(--cream); cursor: pointer; transition: all 0.18s; user-select: none; }
+        .activity-card:hover { border-color: var(--green-bright); background: var(--green-pale); transform: translateY(-1px); }
+        .activity-card.selected { border-color: var(--green-mid); background: linear-gradient(135deg, var(--green-pale), #f0fdf4); box-shadow: 0 3px 10px rgba(45,106,79,0.12); }
+        .activity-card-top { display: flex; align-items: center; gap: 0.5rem; }
+        .activity-emoji { font-size: 1.25rem; line-height: 1; flex-shrink: 0; }
+        .activity-name { font-size: 0.82rem; font-weight: 700; color: var(--text-dark); line-height: 1.2; }
+        .activity-card.selected .activity-name { color: var(--green-dark); }
+        .frequency-select { width: 100%; padding: 0.35rem 0.5rem; border: 1.5px solid var(--green-bright); border-radius: 6px; background: white; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.8rem; font-weight: 700; color: var(--green-dark); cursor: pointer; margin-top: 0.1rem; }
+        .frequency-select:focus { outline: none; box-shadow: 0 0 0 3px rgba(64,145,108,0.15); }
+        .activity-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+        .activity-tag { background: white; border: 1.5px solid var(--green-light); color: var(--green-dark); padding: 0.28rem 0.65rem; border-radius: 99px; font-size: 0.78rem; font-weight: 700; box-shadow: var(--shadow-sm); }
         .meat-options-group { background: linear-gradient(135deg, #fdf6f0, #fff3eb); border-radius: var(--radius-sm); padding: 1rem; border: 1.5px solid #f4c09a; margin-bottom: 1.5rem; }
         .select-all-btn { border-color: var(--amber) !important; color: #92400e !important; font-weight: 700 !important; }
         .select-all-btn.active { background: linear-gradient(135deg, var(--amber-deep), var(--amber)) !important; border-color: transparent !important; color: white !important; }
