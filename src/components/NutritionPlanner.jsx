@@ -16,26 +16,40 @@ const NutritionPlanner = () => {
 
   // ── Check Supabase session on mount ──────────────────────────────────────
   useEffect(() => {
-    // onAuthStateChange fires immediately with the current session
-    // This is more reliable than getSession() in Next.js because it
-    // handles both localStorage (client) and cookie-based sessions
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setAuthUser(session?.user ?? null);
-        setAuthLoading(false);
-      }
-    );
+    let resolved = false;
 
-    // Also call getSession as a fallback for cases where
-    // onAuthStateChange doesn't fire immediately
+    // First: try getSession immediately — this reads from localStorage
+    // which is available as soon as the component mounts client-side
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setAuthUser(session.user);
-      }
+      resolved = true;
+      setAuthUser(session?.user ?? null);
       setAuthLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    // Also subscribe to auth state changes — handles sign in/out events
+    // and fires when OAuth redirects complete
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setAuthUser(session?.user ?? null);
+        if (!resolved) {
+          resolved = true;
+          setAuthLoading(false);
+        }
+      }
+    );
+
+    // Safety timeout — if neither fires within 3s, stop showing spinner
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        setAuthLoading(false);
+      }
+    }, 3000);
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timeout);
+    };
   }, []);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -1503,17 +1517,22 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
   }
 
   if (!authUser) {
-    // Not signed in — show inline sign-in instead of redirecting
-    // This avoids redirect loops caused by session detection timing
     return (
       <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#fdfaf5',fontFamily:"'Plus Jakarta Sans',sans-serif",padding:'2rem'}}>
         <div style={{textAlign:'center',maxWidth:400}}>
-          <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🥗</div>
-          <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:'1.8rem',fontWeight:700,background:'linear-gradient(135deg,#1a4731,#40916c)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',marginBottom:'0.5rem'}}>VitalMenu</h2>
-          <p style={{color:'#7a8c82',marginBottom:'2rem',fontWeight:500}}>Please sign in to access your meal plans.</p>
-          <a href="/auth" style={{display:'inline-block',background:'linear-gradient(135deg,#1a4731,#40916c)',color:'white',padding:'0.875rem 2rem',borderRadius:10,fontWeight:700,fontSize:'1rem',textDecoration:'none',boxShadow:'0 4px 14px rgba(26,71,49,0.25)'}}>
-            Sign In to VitalMenu
+          <div style={{fontSize:'3.5rem',marginBottom:'1rem'}}>🥗</div>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:'2rem',fontWeight:800,background:'linear-gradient(135deg,#1a4731,#40916c)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',marginBottom:'0.5rem'}}>VitalMenu</h2>
+          <p style={{color:'#7a8c82',marginBottom:'2rem',fontWeight:500,fontSize:'1rem'}}>Your AI-powered nutrition guide.</p>
+          <a
+            href="/auth"
+            style={{display:'inline-block',background:'linear-gradient(135deg,#1a4731,#40916c)',color:'white',padding:'0.875rem 2.5rem',borderRadius:12,fontWeight:700,fontSize:'1rem',textDecoration:'none',boxShadow:'0 4px 14px rgba(26,71,49,0.3)',transition:'all 0.2s'}}
+          >
+            Sign In →
           </a>
+          <p style={{marginTop:'1rem',fontSize:'0.85rem',color:'#b0bdb7'}}>
+            Don't have an account?{' '}
+            <a href="/auth" style={{color:'#2d6a4f',fontWeight:700,textDecoration:'none'}}>Sign up free</a>
+          </p>
         </div>
       </div>
     );
