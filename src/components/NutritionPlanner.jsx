@@ -1,10 +1,42 @@
 "use client";
-import React, { useState } from 'react';
-import { Utensils, Target, Activity, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Download, ShoppingCart } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Utensils, Target, Activity, ChefHat, RefreshCw, Info, Calendar, BookOpen, X, Plus, Download, ShoppingCart, LogOut, User } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 const NutritionPlanner = () => {
   const [step, setStep] = useState(1);
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  // ── Check Supabase session on mount ──────────────────────────────────────
+  useEffect(() => {
+    // onAuthStateChange fires immediately with the current session
+    // This is more reliable than getSession() in Next.js because it
+    // handles both localStorage (client) and cookie-based sessions
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setAuthUser(session?.user ?? null);
+        setAuthLoading(false);
+      }
+    );
+
+    // Also call getSession as a fallback for cases where
+    // onAuthStateChange doesn't fire immediately
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setAuthUser(session.user);
+      }
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [errorModal, setErrorModal] = useState(null); // { message, detail }
@@ -1458,6 +1490,35 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
     );
   };
 
+  // ── Auth gate ────────────────────────────────────────────────────────────
+  if (authLoading) {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#fdfaf5',fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+        <div style={{textAlign:'center'}}>
+          <div style={{width:40,height:40,border:'3px solid #dde8e0',borderTopColor:'#40916c',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 1rem'}} />
+          <p style={{color:'#7a8c82',fontWeight:600}}>Loading VitalMenu...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    // Not signed in — show inline sign-in instead of redirecting
+    // This avoids redirect loops caused by session detection timing
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#fdfaf5',fontFamily:"'Plus Jakarta Sans',sans-serif",padding:'2rem'}}>
+        <div style={{textAlign:'center',maxWidth:400}}>
+          <div style={{fontSize:'3rem',marginBottom:'1rem'}}>🥗</div>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontSize:'1.8rem',fontWeight:700,background:'linear-gradient(135deg,#1a4731,#40916c)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',marginBottom:'0.5rem'}}>VitalMenu</h2>
+          <p style={{color:'#7a8c82',marginBottom:'2rem',fontWeight:500}}>Please sign in to access your meal plans.</p>
+          <a href="/auth" style={{display:'inline-block',background:'linear-gradient(135deg,#1a4731,#40916c)',color:'white',padding:'0.875rem 2rem',borderRadius:10,fontWeight:700,fontSize:'1rem',textDecoration:'none',boxShadow:'0 4px 14px rgba(26,71,49,0.25)'}}>
+            Sign In to VitalMenu
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -1487,6 +1548,20 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
             <span className="header-pill">🥗 600+ Recipes</span>
             <span className="header-pill">🧬 Science-Backed</span>
             <span className="header-pill">⚡ AI-Generated</span>
+          </div>
+          <div className="header-user-menu">
+            <span className="header-user-name">
+              <User size={14} /> {authUser.user_metadata?.full_name || authUser.email}
+            </span>
+            <button
+              className="header-signout-btn"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.href = '/auth';
+              }}
+            >
+              <LogOut size={14} /> Sign Out
+            </button>
           </div>
         </div>
       </header>
@@ -2107,6 +2182,10 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         .tag-meat { background: #fef3e2; border-color: #f4c09a; color: #92400e; }
         .tag-allergy { background: #fff1f2; border-color: #fca5a5; color: #991b1b; }
 
+        .header-user-menu { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; justify-content: center; flex-wrap: wrap; }
+        .header-user-name { font-size: 0.82rem; color: rgba(255,255,255,0.85); font-weight: 600; display: flex; align-items: center; gap: 0.35rem; background: rgba(255,255,255,0.1); padding: 0.35rem 0.75rem; border-radius: 99px; border: 1px solid rgba(255,255,255,0.2); }
+        .header-signout-btn { display: flex; align-items: center; gap: 0.35rem; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); padding: 0.35rem 0.75rem; border-radius: 99px; font-size: 0.82rem; font-weight: 700; cursor: pointer; font-family: 'Plus Jakarta Sans', sans-serif; transition: all 0.18s; }
+        .header-signout-btn:hover { background: rgba(255,255,255,0.22); color: white; }
         .spin { animation: rotate 0.9s linear infinite; }
         @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
