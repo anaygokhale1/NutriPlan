@@ -63,26 +63,32 @@ export default function AuthPage() {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
+
     if (error) {
-      // Give clear messages for common errors
-      if (error.message.toLowerCase().includes('invalid login')) {
+      if (error.message.toLowerCase().includes('invalid login') ||
+          error.message.toLowerCase().includes('invalid credentials')) {
         setMessage({ type: 'error', text: 'Incorrect email or password. Please try again.' });
       } else if (error.message.toLowerCase().includes('email not confirmed')) {
-        setMessage({ type: 'error', text: 'Please confirm your email address first. Check your inbox for the confirmation link.' });
+        setMessage({ type: 'error', text: 'Please confirm your email first. Check your inbox for the confirmation link.' });
       } else {
         setMessage({ type: 'error', text: error.message });
       }
-    } else if (data?.session) {
-      // Session confirmed — show success then redirect
-      // The 800ms delay ensures Supabase writes the session cookie
-      // before the home page checks for it
-      setMessage({ type: 'success', text: 'Signed in successfully! Redirecting...' });
-      setTimeout(() => {
-        window.location.replace('/');
-      }, 800);
-    } else {
-      setMessage({ type: 'error', text: 'Sign in failed — no session returned. Please try again.' });
+      return;
     }
+
+    if (!data?.session) {
+      setMessage({ type: 'error', text: 'Sign in failed — please try again.' });
+      return;
+    }
+
+    // Sign in successful
+    setMessage({ type: 'success', text: 'Signed in! Taking you to your plan...' });
+
+    // Wait for Supabase to persist the session to localStorage,
+    // then navigate. Using replace() so back button doesn't loop.
+    setTimeout(() => {
+      window.location.replace('/');
+    }, 1200);
   };
 
   const handleReset = async (e) => {
