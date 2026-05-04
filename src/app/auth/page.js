@@ -81,14 +81,13 @@ export default function AuthPage() {
       return;
     }
 
-    // Sign in successful
-    setMessage({ type: 'success', text: 'Signed in! Taking you to your plan...' });
-
-    // Wait for Supabase to persist the session to localStorage,
-    // then navigate. Using replace() so back button doesn't loop.
+    // Sign in successful — Supabase has already written the session
+    // to localStorage at this point. We give it 1.5s to ensure
+    // the NutritionPlanner component's getSession() call will find it.
+    setMessage({ type: 'success', text: '✅ Signed in! Loading your plan...' });
     setTimeout(() => {
-      window.location.replace('/');
-    }, 1200);
+      window.location.href = '/';
+    }, 1500);
   };
 
   const handleReset = async (e) => {
