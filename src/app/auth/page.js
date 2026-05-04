@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -17,6 +17,13 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
 
+  // If already signed in, go straight to app
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) window.location.href = '/';
+    });
+  }, []);
+
   const clearMessage = () => setMessage(null);
 
   const handleSignUp = async (e) => {
@@ -31,63 +38,81 @@ export default function AuthPage() {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { full_name: fullName },
-        emailRedirectTo: `${window.location.origin}/`,
-      },
+      options: { data: { full_name: fullName } },
     });
     setLoading(false);
+
+    console.log('[SignUp] data:', data, 'error:', error);
+
     if (error) {
-      // "User already registered" means the email exists — suggest signing in
-      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already exists')) {
-        setMessage({ type: 'error', text: 'An account with this email already exists. Please sign in instead.' });
+      if (error.message.toLowerCase().includes('already registered') ||
+          error.message.toLowerCase().includes('already exists')) {
+        setMessage({ type: 'error', text: 'Account already exists. Please sign in.' });
+        setTimeout(() => setMode('login'), 2000);
       } else {
         setMessage({ type: 'error', text: error.message });
       }
-    } else {
-      setMessage({
-        type: 'success',
-        text: 'Account created! Check your email for a confirmation link, then sign in below.',
-      });
-      // Switch to login tab so they can sign in after confirming
-      setTimeout(() => setMode('login'), 3000);
+      return;
     }
+
+    // If session exists immediately — email confirmation is OFF, user is live
+    if (data?.session) {
+      setMessage({ type: 'success', text: 'Account created! Signing you in...' });
+      setTimeout(() => { window.location.href = '/'; }, 1000);
+      return;
+    }
+
+    // Email confirmation is ON — user needs to verify
+    setMessage({
+      type: 'success',
+      text: 'Account created! Check your email for a confirmation link, then come back and sign in.',
+    });
+    setTimeout(() => setMode('login'), 4000);
   };
 
   const handleSignIn = async (e) => {
     e.preventDefault();
     clearMessage();
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    console.log('[SignIn] data:', data, 'error:', error);
+
     setLoading(false);
 
     if (error) {
-      if (error.message.toLowerCase().includes('invalid login') ||
-          error.message.toLowerCase().includes('invalid credentials')) {
-        setMessage({ type: 'error', text: 'Incorrect email or password. Please try again.' });
-      } else if (error.message.toLowerCase().includes('email not confirmed')) {
-        setMessage({ type: 'error', text: 'Please confirm your email first. Check your inbox for the confirmation link.' });
+      console.error('[SignIn] Error:', error.message);
+      if (error.message.toLowerCase().includes('invalid') ||
+          error.message.toLowerCase().includes('credentials')) {
+        setMessage({ type: 'error', text: 'Incorrect email or password.' });
+      } else if (error.message.toLowerCase().includes('not confirmed') ||
+                 error.message.toLowerCase().includes('email not confirmed')) {
+        setMessage({ type: 'error', text: 'Please confirm your email first. Check your inbox.' });
       } else {
-        setMessage({ type: 'error', text: error.message });
+        setMessage({ type: 'error', text: 'Sign in failed: ' + error.message });
       }
       return;
     }
 
-    if (!data?.session) {
-      setMessage({ type: 'error', text: 'Sign in failed — please try again.' });
-      return;
+    if (data?.session) {
+      console.log('[SignIn] Session obtained, user:', data.session.user.email);
+      setMessage({ type: 'success', text: '✅ Signed in successfully! Loading app...' });
+      // Give Supabase time to persist the session token to localStorage
+      // before the home page tries to read it
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 1500);
+    } else {
+      console.warn('[SignIn] No session returned despite no error');
+      setMessage({ type: 'error', text: 'Sign in failed — no session returned. Please try again.' });
     }
-
-    // Sign in successful — Supabase has already written the session
-    // to localStorage at this point. We give it 1.5s to ensure
-    // the NutritionPlanner component's getSession() call will find it.
-    setMessage({ type: 'success', text: '✅ Signed in! Loading your plan...' });
-    setTimeout(() => {
-      window.location.href = '/';
-    }, 1500);
   };
 
   const handleReset = async (e) => {
@@ -165,7 +190,7 @@ export default function AuthPage() {
               </svg>
               <span className="auth-logo-name">VitalMenu</span>
             </div>
-            <h1 className="auth-hero-heading">Nutrition that is<br />built around you.</h1>
+            <h1 className="auth-hero-heading">Nutrition built<br />around you.</h1>
             <p className="auth-hero-sub">AI-generated 7-day meal plans tailored to your goals, body and lifestyle.</p>
             <div className="auth-features">
               {['600+ recipes across 11 cuisines','Science-backed macro calculation','Adapts to your dietary restrictions','Tracks your progress over time'].map(f => (
@@ -180,7 +205,7 @@ export default function AuthPage() {
             {mode === 'reset' ? (
               <>
                 <h2 className="auth-form-title">Reset password</h2>
-                <p className="auth-form-sub">Enter your email and we will send you a reset link.</p>
+                <p className="auth-form-sub">Enter your email and we will send a reset link.</p>
                 {message && <div className={`auth-message ${message.type}`}>{message.text}</div>}
                 <form onSubmit={handleReset}>
                   <div className="auth-field">
@@ -198,7 +223,7 @@ export default function AuthPage() {
             ) : (
               <>
                 <h2 className="auth-form-title">{mode === 'login' ? 'Welcome back' : 'Create account'}</h2>
-                <p className="auth-form-sub">{mode === 'login' ? 'Sign in to view your meal plans and profile.' : 'Get started with your personalised nutrition plan.'}</p>
+                <p className="auth-form-sub">{mode === 'login' ? 'Sign in to view your meal plans.' : 'Get started with your personalised plan.'}</p>
                 <div className="auth-tabs">
                   <button className={`auth-tab ${mode === 'login' ? 'active' : ''}`} onClick={() => { setMode('login'); clearMessage(); }}>Sign In</button>
                   <button className={`auth-tab ${mode === 'signup' ? 'active' : ''}`} onClick={() => { setMode('signup'); clearMessage(); }}>Sign Up</button>
@@ -222,11 +247,11 @@ export default function AuthPage() {
                   {mode === 'signup' && (
                     <div className="auth-field">
                       <label className="auth-label">Confirm password</label>
-                      <input type="password" required className="auth-input" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Re-enter password" autoComplete="new-password" />
+                      <input type="password" required className="auth-input" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Re-enter password" />
                     </div>
                   )}
                   <button type="submit" className="auth-btn" disabled={loading}>
-                    {loading ? <span className="spinner" /> : mode === 'login' ? 'Sign In' : 'Create Account'}
+                    {loading ? <span className="spinner" /> : mode === 'login' ? 'Sign In →' : 'Create Account →'}
                   </button>
                 </form>
                 {mode === 'login' && (
