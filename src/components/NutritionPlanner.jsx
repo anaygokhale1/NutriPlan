@@ -14,20 +14,21 @@ const NutritionPlanner = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  // ── Check Supabase session on mount ──────────────────────────────────────
+  // ── Check Supabase session — client-side only ────────────────────────────
+  // useEffect only runs in the browser, never during SSR.
+  // This prevents the React hydration mismatch (errors #418, #423, #425).
   useEffect(() => {
     let resolved = false;
 
-    // First: try getSession immediately — this reads from localStorage
-    // which is available as soon as the component mounts client-side
     supabase.auth.getSession().then(({ data: { session } }) => {
       resolved = true;
       setAuthUser(session?.user ?? null);
       setAuthLoading(false);
+    }).catch(() => {
+      resolved = true;
+      setAuthLoading(false);
     });
 
-    // Also subscribe to auth state changes — handles sign in/out events
-    // and fires when OAuth redirects complete
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         setAuthUser(session?.user ?? null);
@@ -38,7 +39,6 @@ const NutritionPlanner = () => {
       }
     );
 
-    // Safety timeout — if neither fires within 3s, stop showing spinner
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
