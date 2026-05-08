@@ -22,7 +22,8 @@ const NutritionPlanner = () => {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       resolved = true;
-      setAuthUser(session?.user ?? null);
+      const u = session?.user ?? null;
+      setAuthUser(u);
       setAuthLoading(false);
     }).catch(() => {
       resolved = true;
@@ -205,6 +206,11 @@ const NutritionPlanner = () => {
     };
   };
 
+  // ── Load profile when user signs in ─────────────────────────────────────
+  useEffect(() => {
+    if (authUser) loadUserProfile();
+  }, [authUser]); // eslint-disable-line
+
   // ── Calls /api/chat with STREAMING — tokens arrive in real time ──────────
   // Old approach: waited for ALL tokens then parsed JSON in one shot → 60-90s blank screen
   // New approach: reads tokens as they arrive → first tokens appear within 2-3 seconds
@@ -294,6 +300,122 @@ const NutritionPlanner = () => {
         'JSON parse failed after all sanitisation attempts: ' + e3.message +
         ' | Preview: ' + jsonStr.slice(0, 200)
       );
+    }
+  };
+
+  // ── Save user profile to Supabase ────────────────────────────────────────
+  // Called when user clicks "Review & Generate" (moves to Step 3)
+  const saveUserProfile = async () => {
+    if (!authUser) return;
+    try {
+      const { error } = await supabase.from('user_profiles').upsert({
+        user_id:             authUser.id,
+        full_name:           authUser.user_metadata?.full_name || '',
+        weight:              parseFloat(userData.weight) || null,
+        weight_unit:         userData.weightUnit,
+        height:              parseFloat(userData.height) || null,
+        height_unit:         userData.heightUnit,
+        height_ft:           parseFloat(userData.heightFt) || null,
+        height_in:           parseFloat(userData.heightIn) || null,
+        age:                 parseInt(userData.age) || null,
+        sex:                 userData.sex,
+        goals:               userData.goals,
+        target_weight:       parseFloat(userData.targetWeight) || null,
+        activities:          userData.activities,
+        cuisine_preferences: userData.preferences,
+        restrictions:        userData.restrictions,
+        meat_options:        userData.meatOptions,
+        food_allergies:      userData.foodAllergies,
+        updated_at:          new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+      if (error) console.error('Profile save error:', error);
+      else console.log('[VitalMenu] Profile saved ✅');
+    } catch (e) {
+      console.error('Profile save exception:', e);
+    }
+  };
+
+  // ── Save generated meal plan to Supabase ──────────────────────────────────
+  // Called immediately after a plan is generated
+  const saveMealPlan = async (plan, macroTargets) => {
+    if (!authUser) return;
+    try {
+      const planName = `Week of ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+      const { error } = await supabase.from('saved_meal_plans').insert({
+        user_id:       authUser.id,
+        plan_name:     planName,
+        plan_data:     plan,
+        macro_targets: macroTargets,
+        is_active:     true,
+      });
+      if (error) console.error('Plan save error:', error);
+      else console.log('[VitalMenu] Meal plan saved ✅');
+    } catch (e) {
+      console.error('Plan save exception:', e);
+    }
+  };
+
+  // ── Save to plan_history for progress tracking ─────────────────────────────
+  // Records the weekly macro averages each time a plan is generated
+  const savePlanHistory = async (weeklyTotals) => {
+    if (!authUser) return;
+    try {
+      // Get the Monday of the current week as week_start
+      const now = new Date();
+      const day = now.getDay(); // 0=Sun, 1=Mon...
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const weekStart = new Date(now.setDate(diff));
+      const weekStartStr = weekStart.toISOString().split('T')[0];
+
+      const { error } = await supabase.from('plan_history').insert({
+        user_id:    authUser.id,
+        week_start: weekStartStr,
+        calories:   Math.round(weeklyTotals.calories / 7),
+        protein:    Math.round(weeklyTotals.protein  / 7),
+        carbs:      Math.round(weeklyTotals.carbs    / 7),
+        fat:        Math.round(weeklyTotals.fat      / 7),
+      });
+      if (error) console.error('History save error:', error);
+      else console.log('[VitalMenu] Plan history saved ✅');
+    } catch (e) {
+      console.error('History save exception:', e);
+    }
+  };
+
+  // ── Load saved profile on mount — pre-fills form for returning users ───────
+  const loadUserProfile = async () => {
+    if (!authUser) return;
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .single();
+
+      if (error || !data) return; // no profile yet — new user
+
+      // Pre-fill the form with their saved preferences
+      setUserData(prev => ({
+        ...prev,
+        weight:       String(data.weight || ''),
+        targetWeight: String(data.target_weight || ''),
+        weightUnit:   data.weight_unit || 'kg',
+        height:       String(data.height || ''),
+        heightUnit:   data.height_unit || 'cm',
+        heightFt:     String(data.height_ft || ''),
+        heightIn:     String(data.height_in || ''),
+        age:          String(data.age || ''),
+        sex:          data.sex || '',
+        goals:        data.goals || [],
+        activities:   data.activities || [],
+        preferences:  data.cuisine_preferences || [],
+        restrictions: data.restrictions || [],
+        meatOptions:  data.meat_options || [],
+        foodAllergies: data.food_allergies || [],
+      }));
+      console.log('[VitalMenu] Profile loaded ✅');
+    } catch (e) {
+      console.error('Profile load exception:', e);
     }
   };
 
@@ -548,6 +670,11 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
       setLoadingMsg('Done!');
       setWeeklyPlan(verifiedPlan);
       setStep(4);
+
+      // Save plan and history to Supabase in the background
+      const { calories: tCal, protein: tPro, carbs: tCarbs, fat: tFat } = calculateMacros();
+      saveMealPlan(verifiedPlan, { calories: tCal, protein: tPro, carbs: tCarbs, fat: tFat });
+      savePlanHistory(verifiedPlan.weeklyTotals);
 
     } catch (error) {
       console.error('Error:', error);
@@ -964,7 +1091,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
 
         <div className="button-row">
           <button className="back-btn" onClick={() => setStep(1)}>← Back</button>
-          <button className="next-btn" onClick={() => setStep(3)} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0}>
+          <button className="next-btn" onClick={() => { saveUserProfile(); setStep(3); }} disabled={userData.preferences.length === 0 || userData.restrictions.length === 0}>
             Review & Generate →
           </button>
         </div>
