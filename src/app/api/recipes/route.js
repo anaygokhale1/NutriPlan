@@ -27,7 +27,7 @@ export async function POST(req) {
     // clicks the Recipe button (via a separate /api/recipe/[id] endpoint).
     let query = supabase
       .from('recipes')
-      .select('id, name, cuisine, category, calories, protein, carbs, fat, fiber, portion_size, cooking_time, tags, ingredients, instructions');
+      .select('id, name, cuisine, category, calories, protein, carbs, fat, fiber, portion_size, cooking_time, tags, ingredients, instructions, ingredient_quantities, meal_type');
 
     // ── Step 2: Filter by cuisine preferences ────────────────────────────
     // Only return recipes matching the user's selected cuisines.
@@ -44,7 +44,7 @@ export async function POST(req) {
       // so the app never shows an empty state
       const { data: fallback, error: fallbackError } = await supabase
         .from('recipes')
-        .select('id, name, cuisine, category, calories, protein, carbs, fat, fiber, portion_size, cooking_time, tags, ingredients, instructions');
+        .select('id, name, cuisine, category, calories, protein, carbs, fat, fiber, portion_size, cooking_time, tags, ingredients, instructions, ingredient_quantities, meal_type');
       if (fallbackError) throw new Error(fallbackError.message);
       return processAndReturn(fallback || [], restrictions, meatOptions, foodAllergies);
     }
