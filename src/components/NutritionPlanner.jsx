@@ -1562,7 +1562,15 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
                               </button>
                             </div>
                           </div>
-                          <div className="food-portion">🍽 {food.portion_size}</div>
+                          <div className="food-card-meta-row">
+                            <div className="food-portion">🍽 {food.portion_size}</div>
+                            {food.meal_type && (
+                              <span className={`meal-type-badge meal-type-${food.meal_type}`}>
+                                {food.meal_type === 'breakfast' ? '🌅 Breakfast' :
+                                 food.meal_type === 'snack' ? '🍎 Snack' : '🍽 Meal'}
+                              </span>
+                            )}
+                          </div>
                           <div className="food-meta">{food.cuisine} · {Math.round(food.calories * m)} cal · P{Math.round(food.protein * m)}g · C{Math.round(food.carbs * m)}g · F{Math.round(food.fat * m)}g · Fb{Math.round((food.fiber || 0) * m)}g</div>
                           <div className="food-reason"><Info size={12} /><span>{item.reasoning}</span></div>
                         </div>
@@ -1607,7 +1615,15 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           <div className="modal-body">
             <div className="serving-banner">
               <span>🍽</span>
-              <span>All ingredients below are for a <strong>{selectedRecipe.portion_size}</strong> serving. Scale quantities proportionally for different portion sizes.</span>
+              <div>
+                <span>All ingredients below are for a <strong>{selectedRecipe.portion_size}</strong> serving.</span>
+                {selectedRecipe.meal_type && (
+                  <span className={`meal-type-badge meal-type-${selectedRecipe.meal_type}`} style={{marginLeft:'0.5rem'}}>
+                    {selectedRecipe.meal_type === 'breakfast' ? '🌅 Breakfast' :
+                     selectedRecipe.meal_type === 'snack' ? '🍎 Evening Snack' : '🍽 Meal'}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="modal-meta-grid">
               <div><strong>Cuisine</strong><br />{selectedRecipe.cuisine}</div>
@@ -1621,7 +1637,17 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
             </div>
             <h4>Ingredients</h4>
             <ul className="ing-list">
-              {(selectedRecipe.ingredients || []).map((ing, i) => <li key={i}>{ing}</li>)}
+              {(selectedRecipe.ingredients || []).map((ing, i) => {
+                const qty = selectedRecipe.ingredient_quantities
+                  ? selectedRecipe.ingredient_quantities[i]
+                  : null;
+                return (
+                  <li key={i} className="ing-list-item">
+                    {qty && <span className="ing-qty">{qty}</span>}
+                    <span className="ing-name">{ing}</span>
+                  </li>
+                );
+              })}
             </ul>
             <h4>Instructions</h4>
             <p className="instructions-text">{selectedRecipe.instructions}</p>
@@ -2290,9 +2316,15 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         .nut-name { font-size: 0.7rem; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 3px; font-weight: 700; }
         .modal-body h4 { font-family: 'Playfair Display', serif; font-size: 1.2rem; font-weight: 700; margin-bottom: 0.65rem; color: var(--green-dark); }
         .ing-list { list-style: none; margin-bottom: 1.25rem; }
-        .ing-list li { padding: 0.5rem 0 0.5rem 1.1rem; position: relative; border-bottom: 1px solid var(--cream-dark); font-size: 0.9rem; color: var(--text-mid); font-weight: 500; }
-        .ing-list li::before { content: "•"; position: absolute; left: 0; color: var(--green-bright); font-weight: 800; font-size: 1rem; }
-        .ing-list li:last-child { border-bottom: none; }
+        .ing-list-item { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.55rem 0; border-bottom: 1px solid var(--cream-dark); }
+        .ing-list-item:last-child { border-bottom: none; }
+        .ing-qty { font-size: 0.82rem; font-weight: 800; color: var(--green-mid); background: var(--green-pale); padding: 0.15rem 0.55rem; border-radius: 99px; white-space: nowrap; flex-shrink: 0; min-width: 60px; text-align: center; }
+        .ing-name { font-size: 0.9rem; color: var(--text-mid); font-weight: 500; }
+        .food-card-meta-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+        .meal-type-badge { font-size: 0.68rem; font-weight: 700; padding: 0.15rem 0.55rem; border-radius: 99px; white-space: nowrap; letter-spacing: 0.2px; }
+        .meal-type-breakfast { background: #fef3c7; color: #b45309; }
+        .meal-type-meal      { background: #dbeafe; color: #1d4ed8; }
+        .meal-type-snack     { background: #fce7f3; color: #be185d; }
         .instructions-text { font-size: 0.9rem; line-height: 1.8; background: var(--cream); padding: 1.1rem; border-radius: var(--radius-sm); color: var(--text-mid); border: 1px solid var(--border); font-weight: 500; }
 
         /* ══════════════════════════════════════════
