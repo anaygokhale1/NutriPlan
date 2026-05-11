@@ -475,29 +475,39 @@ const NutritionPlanner = () => {
       // ── STEP 2: Ask AI to build a 7-day plan using real recipes ──
       const { calories, protein, carbs, fat } = calculateMacros();
 
-      // Shuffle each category independently so every generation sees a fresh
-      // random subset — this means plans vary across sessions even with the
-      // same database. Math.random() - 0.5 produces a random sort order.
       const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
 
-      // Cap each category at a sensible ceiling.
-      // The AI only fills ~56 food slots across 7 days so sending 800 recipes
-      // wastes tokens — it has to read every entry before writing a single word.
-      // 80 total recipes ≈ 2,200 tokens vs 800 recipes ≈ 11,000 tokens (5× faster).
-      const sampledFoods = [
-        ...shuffle(database.proteins).slice(0, 25),   // picks 25 random proteins
-        ...shuffle(database.carbs).slice(0, 15),       // picks 15 random carbs
-        ...shuffle(database.vegetables).slice(0, 15),  // picks 15 random vegetables
-        ...shuffle(database.fats).slice(0, 10),        // picks 10 random fats
-        ...shuffle(database.snacks).slice(0, 15),      // picks 15 random snacks
-      ];                                               // = 80 recipes total
+      // ── Separate foods by meal_type for strict slot compliance ─────────────
+      // Breakfast → only recipes tagged meal_type='breakfast'
+      // Lunch/Dinner → only recipes tagged meal_type='meal'
+      // Snack → only recipes tagged meal_type='snack'
+      // Falls back to nutritional category if meal_type column is not yet populated.
 
-      // Build the compact string the AI reads — id + name + key macros only.
-      // We deliberately omit cooking_time, instructions, ingredients etc.
-      // because the AI doesn't need them to pick meals — less text = faster response.
-      const foodList = sampledFoods
-        .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
-        .join(', ');
+      const toList = (foods, limit) =>
+        shuffle(foods).slice(0, limit)
+          .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
+          .join(', ');
+
+      // Split allFoods by meal_type
+      const breakfastFoods = allFoods.filter(f => f.meal_type === 'breakfast');
+      const mealFoods      = allFoods.filter(f => f.meal_type === 'meal');
+      const snackFoods     = allFoods.filter(f => f.meal_type === 'snack');
+
+      // Fallback: if meal_type not yet in DB, use nutritional categories as proxy
+      const breakfastPool = breakfastFoods.length >= 5
+        ? breakfastFoods
+        : [...database.carbs, ...database.proteins.filter(f => f.calories < 300)];
+      const mealPool = mealFoods.length >= 10
+        ? mealFoods
+        : [...database.proteins, ...database.carbs, ...database.vegetables];
+      const snackPool = snackFoods.length >= 5
+        ? snackFoods
+        : [...database.snacks, ...database.fats];
+
+      // Build separate food lists for each meal slot — AI only sees valid options per slot
+      const breakfastList = toList(breakfastPool, 20);
+      const lunchDinnerList = toList(mealPool, 35);
+      const snackList = toList(snackPool, 15);
 
       const meatRestriction = userData.meatOptions.length > 0
         ? `Allowed meats: ${userData.meatOptions.join(', ')} only.`
@@ -506,16 +516,13 @@ const NutritionPlanner = () => {
         ? `STRICTLY exclude recipes containing: ${userData.foodAllergies.filter(a => a !== 'No Allergies').join(', ')}.`
         : '';
 
-      // Per-meal calorie targets — split daily total across 4 meals
-      // Breakfast 25%, Lunch 30%, Snack 15%, Dinner 30%
+      // Per-meal calorie targets
       const mealTargets = {
         breakfast: Math.round(calories * 0.25),
         lunch:     Math.round(calories * 0.30),
         snack:     Math.round(calories * 0.15),
         dinner:    Math.round(calories * 0.30),
       };
-      // Items needed per meal — scale with calorie target
-      // Higher calorie targets need more items to reach the number
       const itemsPerMeal = calories >= 2500 ? '3-4' : calories >= 2000 ? '2-3' : '2';
 
       const planPrompt = `You are a certified nutritionist building a PRECISE 7-day meal plan.
@@ -525,7 +532,7 @@ CRITICAL: You MUST hit these DAILY targets within 10%:
   Carbs:    ${carbs}g      (min ${Math.round(carbs*0.90)}g,    max ${Math.round(carbs*1.10)}g)
   Fat:      ${fat}g        (min ${Math.round(fat*0.90)}g,      max ${Math.round(fat*1.10)}g)
 
-PER-MEAL calorie targets (select items whose calories SUM to these):
+PER-MEAL calorie targets:
   Breakfast: ~${mealTargets.breakfast} kcal (${itemsPerMeal} items)
   Lunch:     ~${mealTargets.lunch} kcal (${itemsPerMeal} items)
   Snack:     ~${mealTargets.snack} kcal (1-2 items)
@@ -535,15 +542,25 @@ Goals: ${userData.goals.join(', ')}${userData.targetWeight ? '. Target: ' + user
 Dietary restrictions: ${userData.restrictions.join(', ')}. ${meatRestriction} ${allergyRestriction}
 Activities: ${userData.activities.map(a => a.name + ' ' + a.frequency).join(', ')}.
 
-Available foods — each entry is id:name(calories,protein,carbs,fat):
-${foodList}
+BREAKFAST foods — use ONLY these ids for breakfast:
+${breakfastList}
 
-INSTRUCTIONS:
-- For each meal, pick items whose COMBINED calories match the per-meal target above.
-- If one item is not enough calories, ADD more items from the list until you reach the target.
+LUNCH and DINNER foods — use ONLY these ids for lunch and dinner:
+${lunchDinnerList}
+
+SNACK foods — use ONLY these ids for snack:
+${snackList}
+
+STRICT RULES:
+- Breakfast items MUST come from the BREAKFAST foods list only.
+- Lunch and Dinner items MUST come from the LUNCH and DINNER foods list only.
+- Snack items MUST come from the SNACK foods list only.
+- Do NOT mix lists across meal slots under any circumstances.
+- For each meal, pick items whose COMBINED calories match the per-meal target.
+- If one item is not enough calories, ADD more items from the correct list.
 - Vary meals across days — do not repeat the same id on consecutive days.
-- Use ONLY exact id values from the list. Do NOT invent ids.
-- reasoning: max 6 plain words on a SINGLE LINE, NO apostrophes, quotes, newlines or special characters.
+- Use ONLY exact id values from the lists above. Do NOT invent ids.
+- reasoning: max 6 plain words, SINGLE LINE, NO apostrophes quotes or special characters.
 - Do NOT include a multiplier field.
 
 Return ONLY a raw JSON object. Start with { end with }. No markdown:
@@ -631,16 +648,18 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
           );
           const calGap = targetCal - day.dailyTotals.calories;
 
-          // Find the best-fitting food: highest calorie that doesn't overshoot
+          // Find the best-fitting food from meal-appropriate pool
+          // Only add 'meal' type foods to dinner — never breakfast or snack items
           const candidates = allFoods
             .filter(f => !usedIds.has(f.id))
-            .filter(f => f.calories <= calGap * 1.3) // allow slight overshoot
+            .filter(f => !f.meal_type || f.meal_type === 'meal') // respect meal_type
+            .filter(f => f.calories <= calGap * 1.3)
             .sort((a, b) => Math.abs(a.calories - calGap * 0.5) - Math.abs(b.calories - calGap * 0.5));
 
           if (candidates.length === 0) break;
           const pick = candidates[0];
 
-          // Add to dinner
+          // Add to dinner (only meal-type foods reach here)
           day.meals.dinner.items.push({ id: pick.id, reasoning: 'Added to meet calorie target' });
 
           // Recalculate dinner totals
@@ -707,17 +726,27 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
         .map(item => item.id)
         .filter(id => id !== currentItemId);
 
-      // Filter to SAME category only, excluding current item and already-used items
+      // Determine which meal_type is appropriate for this slot
+      const slotMealType = mealType === 'breakfast' ? 'breakfast'
+                         : mealType === 'snack'     ? 'snack'
+                         :                            'meal'; // lunch or dinner
+
+      // Filter candidates: same category AND correct meal_type
       const sameCategoryFoods = allFoods.filter(f =>
         f.category === currentCategory &&
         f.id !== currentItemId &&
-        !currentMealItemIds.includes(f.id)
+        !currentMealItemIds.includes(f.id) &&
+        (!f.meal_type || f.meal_type === slotMealType) // respect meal_type
       );
 
-      // Fallback to all foods if no same-category alternatives exist
+      // Fallback: relax category but keep meal_type filter
       const candidateFoods = sameCategoryFoods.length > 0
         ? sameCategoryFoods
-        : allFoods.filter(f => f.id !== currentItemId && !currentMealItemIds.includes(f.id));
+        : allFoods.filter(f =>
+            f.id !== currentItemId &&
+            !currentMealItemIds.includes(f.id) &&
+            (!f.meal_type || f.meal_type === slotMealType)
+          );
 
       if (candidateFoods.length === 0) {
         throw new Error('No alternative foods available to swap with.');
