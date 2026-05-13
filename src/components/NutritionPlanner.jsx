@@ -329,7 +329,7 @@ const NutritionPlanner = () => {
 
       if (dayMatches.length > 0) {
         console.warn(
-          \`[VitalMenu] JSON was truncated — recovered \${dayMatches.length}/7 days. \n\` +
+          '[VitalMenu] JSON was truncated — recovered ' + dayMatches.length + '/7 days. ' +
           'This usually means the AI hit its token limit. Consider regenerating.'
         );
         return { days: dayMatches };
