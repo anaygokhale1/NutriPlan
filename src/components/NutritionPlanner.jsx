@@ -65,6 +65,7 @@ const NutritionPlanner = () => {
   const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [swapping, setSwapping] = useState(null);
+  const [favourites, setFavourites] = useState(new Set()); // Set of recipe IDs
 
   const goals = ['Weight Loss', 'Muscle Gain', 'Weight Gain', 'Maintenance', 'Athletic Performance'];
   const activityList = [
@@ -208,7 +209,10 @@ const NutritionPlanner = () => {
 
   // ── Load profile when user signs in ─────────────────────────────────────
   useEffect(() => {
-    if (authUser) loadUserProfile();
+    if (authUser) {
+      loadUserProfile();
+      loadFavourites();
+    }
   }, [authUser]); // eslint-disable-line
 
   // ── Calls /api/chat with STREAMING — tokens arrive in real time ──────────
@@ -267,40 +271,75 @@ const NutritionPlanner = () => {
 
     let jsonStr = accumulated.slice(firstBrace, lastBrace + 1);
 
-    // Step 2: try parsing as-is first
-    // Try parsing directly first
-    // ── 3-stage JSON parser ────────────────────────────────────────────────
-    // Stage 1: try raw parse — works the majority of the time
+    // ── 4-stage JSON parser ────────────────────────────────────────────────
+    // Stage 1: raw parse — works most of the time
     try { return JSON.parse(jsonStr); } catch (e1) {}
 
-    // Stage 2: targeted sanitisation for the most common AI mistakes
+    // Stage 2: targeted sanitisation for common AI mistakes
     try {
       let s = jsonStr;
-      s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");   // curly single quotes
-      s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');   // curly double quotes
-      s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');     // trailing commas
-      // Fix unquoted property keys: {dayNumber: 1} → {"dayNumber": 1}
-      // Matches word chars at start of object property that are not already quoted
+      s = s.replace(/\u2018/g, "'").replace(/\u2019/g, "'");
+      s = s.replace(/\u201C/g, '"').replace(/\u201D/g, '"');
+      s = s.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
       s = s.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
-      // Strip ALL control characters (ASCII 0-31) inside quoted string values
-      s = s.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
-        return match.replace(/[\x00-\x1F]/g, ' ');
-      });
+      s = s.replace(/"((?:[^"\\]|\\.)*)"/g, (m) => m.replace(/[\x00-\x1F]/g, ' '));
       return JSON.parse(s);
     } catch (e2) {}
 
-    // Stage 3: nuclear option — strip ALL control chars from the entire string,
-    // then retry. This is safe because JSON structural chars ({ } [ ] : , ")
-    // are all above ASCII 31.
+    // Stage 3: nuclear — strip all control chars
     try {
-      const clean = jsonStr.replace(/[\x00-\x1F]/g, ' ');
-      return JSON.parse(clean);
-    } catch (e3) {
-      throw new Error(
-        'JSON parse failed after all sanitisation attempts: ' + e3.message +
-        ' | Preview: ' + jsonStr.slice(0, 200)
-      );
-    }
+      return JSON.parse(jsonStr.replace(/[\x00-\x1F]/g, ' '));
+    } catch (e3) {}
+
+    // Stage 4: truncation recovery — the AI ran out of tokens mid-JSON.
+    // Extract every complete day object that was fully written before the cut-off.
+    // A complete day has all 4 meals (breakfast, lunch, snack, dinner) with items.
+    // We reconstruct a valid JSON object from only the complete days.
+    try {
+      const dayMatches = [];
+      // Match each "dayNumber":N ... up to the next "dayNumber" or end
+      const dayRegex = /"dayNumber"\s*:\s*(\d)/g;
+      const positions = [];
+      let m;
+      while ((m = dayRegex.exec(jsonStr)) !== null) {
+        positions.push(m.index);
+      }
+
+      for (let i = 0; i < positions.length; i++) {
+        const start = jsonStr.lastIndexOf('{', positions[i]);
+        const end   = i + 1 < positions.length
+          ? jsonStr.lastIndexOf('}', positions[i + 1]) + 1
+          : jsonStr.lastIndexOf('}') + 1;
+        if (start < 0 || end <= start) continue;
+        const dayStr = jsonStr.slice(start, end);
+        // Only keep days that have all 4 meal types
+        if (!dayStr.includes('"breakfast"') ||
+            !dayStr.includes('"lunch"')     ||
+            !dayStr.includes('"snack"')     ||
+            !dayStr.includes('"dinner"'))    continue;
+        try {
+          // Sanitise and parse the individual day
+          let s = dayStr
+            .replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
+            .replace(/[\x00-\x1F]/g, ' ');
+          const day = JSON.parse(s);
+          if (day.dayNumber && day.meals) dayMatches.push(day);
+        } catch { /* skip malformed day */ }
+      }
+
+      if (dayMatches.length > 0) {
+        console.warn(
+          \`[VitalMenu] JSON was truncated — recovered \${dayMatches.length}/7 days. \n\` +
+          'This usually means the AI hit its token limit. Consider regenerating.'
+        );
+        return { days: dayMatches };
+      }
+    } catch (e4) { /* fall through to final error */ }
+
+    throw new Error(
+      'JSON parse failed after all recovery attempts: ' +
+      ' | Preview: ' + jsonStr.slice(0, 200)
+    );
   };
 
   // ── Save user profile to Supabase ────────────────────────────────────────
@@ -419,6 +458,55 @@ const NutritionPlanner = () => {
     }
   };
 
+  // ── Load favourites from Supabase on mount ──────────────────────────────
+  const loadFavourites = async () => {
+    if (!authUser) return;
+    try {
+      const { data, error } = await supabase
+        .from('favourite_recipes')
+        .select('recipe_id')
+        .eq('user_id', authUser.id);
+      if (error) return;
+      setFavourites(new Set((data || []).map(r => r.recipe_id)));
+    } catch (e) { console.error('Favourites load error:', e); }
+  };
+
+  // ── Toggle favourite — saves/removes from Supabase ─────────────────────
+  const toggleFavourite = async (recipeId, e) => {
+    if (e) e.stopPropagation(); // prevent opening recipe modal
+    if (!authUser) return;
+
+    const isFav = favourites.has(recipeId);
+
+    // Optimistic update — update UI immediately
+    setFavourites(prev => {
+      const next = new Set(prev);
+      isFav ? next.delete(recipeId) : next.add(recipeId);
+      return next;
+    });
+
+    try {
+      if (isFav) {
+        await supabase
+          .from('favourite_recipes')
+          .delete()
+          .eq('user_id', authUser.id)
+          .eq('recipe_id', recipeId);
+      } else {
+        await supabase
+          .from('favourite_recipes')
+          .insert({ user_id: authUser.id, recipe_id: recipeId });
+      }
+    } catch (err) {
+      // Revert optimistic update on error
+      setFavourites(prev => {
+        const next = new Set(prev);
+        isFav ? next.add(recipeId) : next.delete(recipeId);
+        return next;
+      });
+    }
+  };
+
   // ── Fetches real recipes from Supabase via /api/recipes ──
   const fetchRecipesFromDB = async () => {
     const response = await fetch('/api/recipes', {
@@ -477,16 +565,28 @@ const NutritionPlanner = () => {
 
       const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
 
+      // ── Always include favourite recipes in the AI food pool ───────────
+      // Favourited recipes are pinned into each category's sample so the AI
+      // can pick them. They don't count against the random sample cap.
+      const favouriteIds = favourites; // Set of recipe IDs
+
       // ── Separate foods by meal_type for strict slot compliance ─────────────
       // Breakfast → only recipes tagged meal_type='breakfast'
       // Lunch/Dinner → only recipes tagged meal_type='meal'
       // Snack → only recipes tagged meal_type='snack'
       // Falls back to nutritional category if meal_type column is not yet populated.
 
-      const toList = (foods, limit) =>
-        shuffle(foods).slice(0, limit)
-          .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)`)
+      const toList = (foods, limit) => {
+        // Pin favourites first so they always appear in the AI's pool
+        const favs    = foods.filter(f => favouriteIds.has(f.id));
+        const nonFavs = foods.filter(f => !favouriteIds.has(f.id));
+        // Fill remaining slots with random non-favourites
+        const remaining = Math.max(0, limit - favs.length);
+        const selected = [...favs, ...shuffle(nonFavs).slice(0, remaining)];
+        return selected
+          .map(f => `${f.id}:${f.name}(${f.calories}cal,P${f.protein}g,C${f.carbs}g,F${f.fat}g)${favouriteIds.has(f.id) ? '[FAV]' : ''}`)
           .join(', ');
+      };
 
       // Split allFoods by meal_type
       const breakfastFoods = allFoods.filter(f => f.meal_type === 'breakfast');
@@ -505,9 +605,9 @@ const NutritionPlanner = () => {
         : [...database.snacks, ...database.fats];
 
       // Build separate food lists for each meal slot — AI only sees valid options per slot
-      const breakfastList = toList(breakfastPool, 20);
-      const lunchDinnerList = toList(mealPool, 35);
-      const snackList = toList(snackPool, 15);
+      const breakfastList = toList(breakfastPool, 15);
+      const lunchDinnerList = toList(mealPool, 28);
+      const snackList = toList(snackPool, 12);
 
       const meatRestriction = userData.meatOptions.length > 0
         ? `Allowed meats: ${userData.meatOptions.join(', ')} only.`
@@ -552,6 +652,7 @@ SNACK foods — use ONLY these ids for snack:
 ${snackList}
 
 STRICT RULES:
+- Items marked [FAV] are the user's favourites — prefer them when their calories fit the meal target.
 - Breakfast items MUST come from the BREAKFAST foods list only.
 - Lunch and Dinner items MUST come from the LUNCH and DINNER foods list only.
 - Snack items MUST come from the SNACK foods list only.
@@ -560,7 +661,7 @@ STRICT RULES:
 - If one item is not enough calories, ADD more items from the correct list.
 - Vary meals across days — do not repeat the same id on consecutive days.
 - Use ONLY exact id values from the lists above. Do NOT invent ids.
-- reasoning: max 6 plain words, SINGLE LINE, NO apostrophes quotes or special characters.
+- reasoning: max 4 plain words, SINGLE LINE, NO apostrophes or quotes.
 - Do NOT include a multiplier field.
 
 Return ONLY a raw JSON object. Start with { end with }. No markdown:
@@ -572,7 +673,7 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
       // The user now sees "Generating... 1,240 chars received" growing in real time
       // instead of a frozen screen for 60+ seconds.
       let streamedChars = 0;
-      const planData = await callAPI(planPrompt, 7000, (accumulated) => {
+      const planData = await callAPI(planPrompt, 8000, (accumulated) => {
         streamedChars = accumulated.length;
         const days = (accumulated.match(/"dayName"/g) || []).length;
         if (days > 0) {
@@ -589,6 +690,12 @@ Return ONLY a raw JSON object. Start with { end with }. No markdown:
 
       if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
         throw new Error('Meal plan generation failed. Please try again.');
+      }
+
+      // Warn if we only recovered a partial plan from truncation
+      if (planData.days.length < 7) {
+        const missing = 7 - planData.days.length;
+        console.warn(`[VitalMenu] Only ${planData.days.length} days received — ${missing} missing. Regenerating missing days.`);
       }
 
       // FIX 2: Recompute ALL totals from real recipe data — never trust AI arithmetic
@@ -1695,6 +1802,13 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
                           <div className="food-top-row">
                             <span className="food-name">{food.name}</span>
                             <div className="food-actions">
+                              <button
+                                className={`btn-fav ${favourites.has(food.id) ? 'active' : ''}`}
+                                onClick={e => toggleFavourite(food.id, e)}
+                                title={favourites.has(food.id) ? 'Remove from favourites' : 'Add to favourites'}
+                              >
+                                {favourites.has(food.id) ? '❤️' : '🤍'}
+                              </button>
                               <button className="btn-recipe" onClick={() => openRecipe(food.id)}><BookOpen size={13} /> Recipe</button>
                               <button className="btn-swap" onClick={() => swapFood(selectedDay, mealType, item.id)} disabled={isSwapping}>
                                 <RefreshCw size={13} className={isSwapping ? 'spin' : ''} /> Swap
@@ -1748,7 +1862,17 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
       <div className="modal-overlay" onClick={() => setSelectedRecipe(null)}>
         <div className="modal-box" onClick={e => e.stopPropagation()}>
           <div className="modal-head">
-            <h3>{selectedRecipe.name}</h3>
+            <div style={{display:'flex',alignItems:'center',gap:'0.5rem',flex:1,minWidth:0}}>
+              <h3 style={{flex:1,minWidth:0}}>{selectedRecipe.name}</h3>
+              <button
+                className={`modal-fav-btn ${favourites.has(selectedRecipe.id) ? 'active' : ''}`}
+                onClick={e => toggleFavourite(selectedRecipe.id, e)}
+                title={favourites.has(selectedRecipe.id) ? 'Remove from favourites' : 'Save as favourite'}
+              >
+                <span style={{fontSize:'1.1rem'}}>{favourites.has(selectedRecipe.id) ? '❤️' : '🤍'}</span>
+                <span>{favourites.has(selectedRecipe.id) ? 'Saved' : 'Save'}</span>
+              </button>
+            </div>
             <button className="modal-close" onClick={() => setSelectedRecipe(null)}><X size={20} /></button>
           </div>
           <div className="modal-body">
@@ -2316,6 +2440,13 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           border: 1.5px solid var(--green-bright); background: white;
           color: var(--green-mid); white-space: nowrap;
         }
+        .btn-fav { width: 28px; height: 28px; border: none; background: transparent; cursor: pointer; font-size: 0.9rem; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: transform 0.15s; flex-shrink: 0; }
+        .btn-fav:hover { transform: scale(1.25); }
+        .btn-fav.active { animation: heartPop 0.25s ease; }
+        @keyframes heartPop { 0% { transform: scale(1); } 50% { transform: scale(1.4); } 100% { transform: scale(1); } }
+        .modal-fav-btn { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.875rem; border-radius: 99px; border: 1.5px solid #fca5a5; background: white; color: #be123c; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; }
+        .modal-fav-btn:hover { background: #fff1f2; }
+        .modal-fav-btn.active { background: #fff1f2; border-color: #f87171; }
         .btn-recipe:hover, .btn-swap:hover {
           background: linear-gradient(135deg, var(--green-mid), var(--green-bright));
           color: white; border-color: transparent;
