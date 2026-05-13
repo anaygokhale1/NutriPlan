@@ -1263,24 +1263,125 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
     const mealNames = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Evening Snack', dinner: 'Dinner' };
     const mealIcons = { breakfast: '🌅', lunch: '☀️', snack: '🍎', dinner: '🌙' };
 
-    // ── Build shopping list from all 7 days ──
+    // ── Build shopping list from all 7 days — with quantities ──────────────
     const buildShoppingList = () => {
       const ingredientMap = {};
+
+      // ── Quantity addition helper ────────────────────────────────────────
+      // Intelligently sums quantities when the same ingredient appears in
+      // multiple recipes. Handles: "200 g" + "150 g" = "350 g",
+      // "2 tbsp" + "1 tbsp" = "3 tbsp", "3 cloves" + "2 cloves" = "5 cloves"
+      // For non-numeric quantities ("small handful", "to taste") it deduplicates
+      // and lists them as "x2", "x3" etc.
+      const addQuantities = (existing, incoming) => {
+        if (!existing || existing === '—') return incoming || '—';
+        if (!incoming) return existing;
+
+        // Try to extract a numeric value and a unit from both quantities
+        const parseQty = (str) => {
+          // Handle fractions: "1/2", "1/4", "3/4"
+          const fracMatch = str.match(/^(\d+)\/(\d+)\s*(.*)/);
+          if (fracMatch) {
+            return { val: parseInt(fracMatch[1]) / parseInt(fracMatch[2]), unit: fracMatch[3].trim().toLowerCase() };
+          }
+          // Handle "1-2 tbsp" ranges — use the midpoint
+          const rangeMatch = str.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\s*(.*)/);
+          if (rangeMatch) {
+            const mid = (parseFloat(rangeMatch[1]) + parseFloat(rangeMatch[2])) / 2;
+            return { val: mid, unit: rangeMatch[3].trim().toLowerCase() };
+          }
+          // Standard number + unit: "200 g", "3 cloves", "2 tbsp"
+          const numMatch = str.match(/^(\d+(?:\.\d+)?)\s*(.*)/);
+          if (numMatch) {
+            return { val: parseFloat(numMatch[1]), unit: numMatch[2].trim().toLowerCase() };
+          }
+          return null;
+        };
+
+        const a = parseQty(existing);
+        const b = parseQty(incoming);
+
+        // Both parseable and same unit — add them
+        if (a && b && a.unit === b.unit && a.unit !== '') {
+          const total = a.val + b.val;
+          // Format nicely: whole numbers stay whole, decimals show 1dp
+          const formatted = total % 1 === 0 ? total.toString() : total.toFixed(1);
+          // Re-attach any trailing descriptor from the longer string
+          const descA = existing.replace(/^[\d.\/\s-]+/, '').trim();
+          const descB = incoming.replace(/^[\d.\/\s-]+/, '').trim();
+          const desc = descA.length >= descB.length ? descA : descB;
+          // Remove the raw unit from desc if it starts with it
+          const cleanDesc = desc.replace(new RegExp('^' + a.unit + '\s*', 'i'), '');
+          return cleanDesc
+            ? `${formatted} ${a.unit} ${cleanDesc}`.trim()
+            : `${formatted} ${a.unit}`.trim();
+        }
+
+        // Not addable (different units, or non-numeric like "small handful")
+        // Just note it appears multiple times
+        if (existing === incoming) return existing; // identical — no change
+        return existing + ' + ' + incoming;
+      };
+
+      // Track how many times each recipe uses each ingredient (for quantity scaling)
+      const recipeUseCount = {}; // { foodId: occurrenceCount }
+
+      weeklyPlan.days.forEach(day => {
+        Object.values(day.meals).forEach(meal => {
+          meal.items.forEach(item => {
+            recipeUseCount[item.id] = (recipeUseCount[item.id] || 0) + 1;
+          });
+        });
+      });
+
+      // Build the ingredient map
       weeklyPlan.days.forEach(day => {
         Object.values(day.meals).forEach(meal => {
           meal.items.forEach(item => {
             const food = allFoods.find(f => f.id === item.id);
             if (!food || !food.ingredients) return;
-            food.ingredients.forEach(ing => {
+
+            // Parse ingredient_quantities — may be stored as JSON string or array
+            let qtys = [];
+            try {
+              qtys = food.ingredient_quantities
+                ? (typeof food.ingredient_quantities === 'string'
+                    ? JSON.parse(food.ingredient_quantities)
+                    : food.ingredient_quantities)
+                : [];
+            } catch { qtys = []; }
+
+            // How many times does this exact recipe appear in the plan?
+            const timesUsed = recipeUseCount[item.id] || 1;
+
+            food.ingredients.forEach((ing, idx) => {
               const key = ing.toLowerCase().trim();
+              const rawQty = qtys[idx] || null;
+
               if (!ingredientMap[key]) {
-                ingredientMap[key] = { name: ing, recipes: new Set(), category: food.category };
+                // First time we see this ingredient — initialise the entry
+                ingredientMap[key] = {
+                  name: ing,
+                  quantity: rawQty || '—',
+                  recipes: new Set(),
+                  category: food.category,
+                  timesAdded: 0,
+                };
+              } else {
+                // Ingredient already seen — add the quantity on top
+                ingredientMap[key].quantity = addQuantities(
+                  ingredientMap[key].quantity,
+                  rawQty
+                );
               }
+
               ingredientMap[key].recipes.add(food.name);
+              ingredientMap[key].timesAdded += 1;
             });
           });
         });
       });
+
       // Sort by category then alphabetically
       const categoryOrder = { proteins: 0, carbs: 1, vegetables: 2, fats: 3, snacks: 4 };
       return Object.values(ingredientMap).sort((a, b) => {
@@ -1401,7 +1502,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         ['VitalMenu — Weekly Shopping List'],
         ['Generated for your 7-day meal plan', '', '', userData.goals.join(' + ') + ' goal'],
         [],
-        ['✓', 'Ingredient', 'Category', 'Used In Recipes'],
+        ['✓', 'Ingredient', 'Total Quantity', 'Category', 'Used In Recipes'],
       ];
 
       let lastCat = null;
@@ -1415,6 +1516,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
         rows.push([
           '☐',
           item.name,
+          item.quantity && item.quantity !== '—' ? item.quantity : '',
           cat,
           [...item.recipes].join(', '),
         ]);
@@ -1424,7 +1526,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
       rows.push(['', 'Total unique ingredients: ' + list.length]);
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [4, 28, 22, 50].map(w => ({ wch: w }));
+      ws['!cols'] = [4, 28, 16, 22, 50].map(w => ({ wch: w }));
       XLSX.utils.book_append_sheet(wb, ws, 'Shopping List');
       XLSX.writeFile(wb, 'VitalMenu_ShoppingList.xlsx');
     };
@@ -1474,8 +1576,16 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
                       {done && <span>✓</span>}
                     </div>
                     <div className="shopping-item-info">
-                      <span className="shopping-item-name">{item.name}</span>
-                      <span className="shopping-item-recipes">Used in: {[...item.recipes].slice(0, 3).join(', ')}{item.recipes.size > 3 ? ` +${item.recipes.size - 3} more` : ''}</span>
+                      <div className="shopping-item-top">
+                        <span className="shopping-item-name">{item.name}</span>
+                        {item.quantity && item.quantity !== '—' && (
+                          <span className={`shopping-qty-badge ${done ? 'done' : ''}`}>{item.quantity}</span>
+                        )}
+                      </div>
+                      <span className="shopping-item-recipes">
+                        Used in: {[...item.recipes].slice(0, 3).join(', ')}{item.recipes.size > 3 ? ` +${item.recipes.size - 3} more` : ''}
+                        {item.timesAdded > 1 && <span className="shopping-times-used"> · appears {item.timesAdded}× across the week</span>}
+                      </span>
                     </div>
                   </div>
                 );
@@ -2282,7 +2392,11 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           border-color: transparent; box-shadow: 0 2px 6px rgba(45,106,79,0.35);
         }
         .shopping-item-info { flex: 1; min-width: 0; }
-        .shopping-item-name { display: block; font-weight: 700; font-size: 0.9rem; color: var(--text-dark); margin-bottom: 0.15rem; }
+        .shopping-item-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.15rem; }
+        .shopping-item-name { font-weight: 700; font-size: 0.9rem; color: var(--text-dark); }
+        .shopping-qty-badge { font-size: 0.72rem; font-weight: 800; background: var(--green-pale); color: var(--green-dark); padding: 0.15rem 0.55rem; border-radius: 99px; white-space: nowrap; flex-shrink: 0; border: 1px solid rgba(45,106,79,0.15); }
+        .shopping-qty-badge.done { background: #e5e7eb; color: #9ca3af; }
+        .shopping-times-used { color: var(--amber-deep); font-weight: 600; font-style: italic; }
         .shopping-item.checked .shopping-item-name { text-decoration: line-through; color: var(--text-soft); }
         .shopping-item-recipes { display: block; font-size: 0.74rem; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
