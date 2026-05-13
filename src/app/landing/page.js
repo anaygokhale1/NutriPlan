@@ -85,7 +85,7 @@ export default function LandingPage() {
     { val: '600+', label: 'Recipes' },
     { val: '11', label: 'Cuisines' },
     { val: '7', label: 'Days planned' },
-    { val: '10%', label: 'Macro accuracy' },
+    { val: '90%+', label: 'Macro accuracy' },
   ];
 
   return (
@@ -811,7 +811,7 @@ export default function LandingPage() {
         {[
           { val: '600+', label: 'Handpicked recipes' },
           { val: '11', label: 'World cuisines' },
-          { val: '±10%', label: 'Macro accuracy' },
+          { val: '±90%', label: 'Macro accuracy' },
           { val: '7', label: 'Days per plan' },
           { val: '< 30s', label: 'Time to generate' },
         ].map(s => (
