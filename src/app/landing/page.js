@@ -85,7 +85,7 @@ export default function LandingPage() {
     { val: '600+', label: 'Recipes' },
     { val: '11', label: 'Cuisines' },
     { val: '7', label: 'Days planned' },
-    { val: '90%', label: 'Macro Accuracy' },
+    { val: '10%', label: 'Macro accuracy' },
   ];
 
   return (
@@ -164,16 +164,17 @@ export default function LandingPage() {
           display: flex; align-items: center; gap: 0.75rem;
         }
         .btn-ghost {
-          padding: 0.55rem 1.25rem; border-radius: 99px;
-          border: 1.5px solid rgba(26,71,49,0.2);
-          background: transparent; color: var(--green-mid);
+          padding: 0.6rem 1.5rem; border-radius: 99px;
+          background: linear-gradient(135deg, var(--green), var(--green-bright));
+          color: white; border: none;
           font-family: 'DM Sans', sans-serif;
           font-size: 0.88rem; font-weight: 600; cursor: pointer;
           transition: all 0.2s; text-decoration: none; display: inline-block;
+          box-shadow: 0 4px 14px rgba(26,71,49,0.3);
         }
         .btn-ghost:hover {
-          border-color: var(--green-mid);
-          background: var(--green-pale);
+          transform: translateY(-1px);
+          box-shadow: 0 8px 24px rgba(26,71,49,0.4);
         }
         .btn-primary {
           padding: 0.6rem 1.5rem; border-radius: 99px;
@@ -810,7 +811,7 @@ export default function LandingPage() {
         {[
           { val: '600+', label: 'Handpicked recipes' },
           { val: '11', label: 'World cuisines' },
-          { val: '±90%', label: 'Macro Accuracy' },
+          { val: '±10%', label: 'Macro accuracy' },
           { val: '7', label: 'Days per plan' },
           { val: '< 30s', label: 'Time to generate' },
         ].map(s => (
