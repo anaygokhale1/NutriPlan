@@ -1980,7 +1980,7 @@ Return ONLY a raw JSON object. Start with { and end with }: {"replacementId":"ex
           </div>
           <p className="tagline">Your Personalized Nutrition Guide</p>
           <div className="header-pills">
-            <span className="header-pill">🥗 600+ Recipes</span>
+            <span className="header-pill">🥗 2000+ Recipes</span>
             <span className="header-pill">🧬 Science-Backed</span>
             <span className="header-pill">⚡ AI-Generated</span>
           </div>
